@@ -83,16 +83,21 @@ def _assistant_message(content: str | None, tool_calls) -> dict[str, Any]:
     }
 
 
-async def run_agent(
-    ctx: AgentContext, provider: LLMProvider, text: str, history: list[dict[str, str]] | None = None
-) -> list[Reply]:
-    """Run up to MAX_STEPS model calls. Returns the replies to send."""
-    messages: list[dict[str, Any]] = [
+def build_messages(ctx: AgentContext, text: str, history: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
+    """The exact messages the model sees for one trader message (also used by evals)."""
+    return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": build_context(ctx)},
         *(history or []),
         {"role": "user", "content": text},
     ]
+
+
+async def run_agent(
+    ctx: AgentContext, provider: LLMProvider, text: str, history: list[dict[str, str]] | None = None
+) -> list[Reply]:
+    """Run up to MAX_STEPS model calls. Returns the replies to send."""
+    messages = build_messages(ctx, text, history)
     replies: list[Reply] = []
 
     for step in range(MAX_STEPS):

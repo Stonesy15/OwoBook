@@ -18,6 +18,8 @@ from owobook.agent.tools import AgentContext
 from owobook.dates import today_local, utcnow
 from owobook.llm.base import LLMProvider
 from owobook.models import MessageLog, Trader
+from owobook.transcribe import Transcriber
+from owobook.usage import log_usage
 from owobook.whatsapp import formatting as fmt
 from owobook.whatsapp.formatting import Lang, Reply
 
@@ -136,6 +138,44 @@ async def handle_message(
 
     for r in replies:
         _log_message(db, trader, "out", "text", fmt.render_plain(r))
+    return replies
+
+
+async def handle_voice_note(
+    db: Session,
+    provider: LLMProvider,
+    transcriber: Transcriber,
+    wa_id: str,
+    audio: bytes,
+    *,
+    wa_message_id: str | None = None,
+    now: datetime | None = None,
+) -> list[Reply]:
+    """Transcribe a voice note with Muse Voice Transcribe, then handle it like a text message.
+    The first reply starts with what we heard, so the trader can spot mis-hearings."""
+    if already_seen(db, wa_message_id):
+        return []
+    trader, _ = ledger.get_or_create_trader(db, wa_id)
+    lang = _trader_language(db, trader)
+    keywords = [c.display_name for c in ledger.list_customers(db, trader)][:60]
+    keywords += [x for x in (trader.name, trader.shop_name) if x]
+    try:
+        transcript = await transcriber.transcribe(audio, keywords=keywords)
+    except Exception:
+        log.exception("transcription failed for trader %s", trader.id)
+        return [Reply(fmt.t(lang, "error"))]
+    log_usage(
+        db, trader_id=trader.id, provider=transcript.provider, model=transcript.model,
+        audio_seconds=transcript.audio_seconds,
+    )
+    if not transcript.text:
+        return [Reply(fmt.t(lang, "didnt_hear"))]
+
+    replies = await handle_message(
+        db, provider, wa_id, text=transcript.text, msg_type="audio", wa_message_id=wa_message_id, now=now
+    )
+    if replies:
+        replies[0] = Reply(f"🎤 \"{transcript.text}\"\n\n{replies[0].text}", replies[0].buttons)
     return replies
 
 

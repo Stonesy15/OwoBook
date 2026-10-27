@@ -1,28 +1,38 @@
 """Chat with OwoBook in the terminal — no WhatsApp needed.
 
-    uv run python scripts/simulate.py                 # fake AI (no keys needed)
-    uv run python scripts/simulate.py --verbose       # also show the tool calls
-    uv run python scripts/simulate.py --wa-id 2348011112222   # pretend to be another trader
+    uv run python scripts/simulate.py                       # uses LLM_PROVIDER / TRANSCRIBER from .env
+    uv run python scripts/simulate.py --provider fake       # rule-based fake AI, no keys needed
+    uv run python scripts/simulate.py --provider baseten    # Meta open-weights model on Baseten
+    uv run python scripts/simulate.py -v                    # also show tool calls
+    uv run python scripts/simulate.py --wa-id 2348011112222 # pretend to be another trader
 
-Type a message and press Enter. When a reply has buttons, type 1, 2 or 3 to tap one.
+Type a message and press Enter. To send a voice note, type (or drag in) the path to an
+audio file (.ogg .opus .m4a .mp3 .wav). When a reply has buttons, type 1, 2 or 3 to tap one.
+After each turn the simulator prints the model/transcription cost of that message.
 Commands: /help, /quit
 """
 
 import argparse
 import asyncio
 import logging
+import shlex
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from owobook.agent.handler import handle_message  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
+
+from owobook.agent.handler import handle_message, handle_voice_note  # noqa: E402
 from owobook.config import get_settings  # noqa: E402
 from owobook.db import migrate, session_scope  # noqa: E402
-from owobook.llm import get_provider  # noqa: E402
+from owobook.llm import LLMError, get_provider  # noqa: E402
+from owobook.models import UsageLog  # noqa: E402
+from owobook.transcribe import TranscriptionError, get_transcriber  # noqa: E402
 from owobook.whatsapp.formatting import render_plain  # noqa: E402
 
-GREEN, DIM, BOLD, RESET = "\033[32m", "\033[2m", "\033[1m", "\033[0m"
+GREEN, DIM, BOLD, RED, RESET = "\033[32m", "\033[2m", "\033[1m", "\033[31m", "\033[0m"
+AUDIO_EXTS = {".ogg", ".opus", ".oga", ".m4a", ".mp3", ".wav", ".aac", ".amr", ".webm"}
 
 HELP = f"""{DIM}Try:
   Mama Bisi collect 3 bags rice, she go pay 45k Friday
@@ -32,15 +42,32 @@ HELP = f"""{DIM}Try:
   Who owe me money?
   How much I sell this week?
   How much Mama Bisi owe?
+  ~/Downloads/voice-note.ogg      ← a path to an audio file sends it as a voice note
 Type 1/2/3 to tap a button. /quit to exit.{RESET}"""
 
 
+def audio_path(line: str) -> Path | None:
+    """Accept a typed or drag-and-dropped audio path (possibly quoted or with escaped spaces)."""
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        return None
+    if len(parts) != 1:
+        return None
+    path = Path(parts[0]).expanduser()
+    return path if path.suffix.lower() in AUDIO_EXTS and path.is_file() else None
+
+
 async def main() -> None:
+    settings = get_settings()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--wa-id", default="2348000000001", help="pretend WhatsApp number of the trader")
-    parser.add_argument("--provider", default="fake", choices=["fake", "meta", "baseten"])
+    parser.add_argument("--provider", default=settings.llm_provider, choices=["fake", "meta", "baseten"])
+    parser.add_argument("--transcriber", default=None, choices=["fake", "meta"],
+                        help="default: fake with --provider fake, otherwise TRANSCRIBER from .env")
     parser.add_argument("--verbose", "-v", action="store_true", help="show tool calls")
     args = parser.parse_args()
+    transcriber_name = args.transcriber or ("fake" if args.provider == "fake" else settings.transcriber)
 
     migrate()  # runs first: Alembic's logging config would otherwise override ours
     logging.basicConfig(
@@ -49,13 +76,17 @@ async def main() -> None:
     for noisy in ("alembic", "httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    provider = get_provider(args.provider)
+    try:
+        provider = get_provider(args.provider)
+    except LLMError as exc:
+        sys.exit(f"{RED}{exc}{RESET}\nTip: run with --provider fake to try without keys.")
+    transcriber = None
+
     print(f"{BOLD}OwoBook simulator{RESET} — trader {args.wa_id}, AI: {provider.name} ({provider.model}), "
-          f"DB: {get_settings().database_url}")
+          f"voice: {transcriber_name}, DB: {settings.database_url}")
     print(HELP)
 
     buttons: list = []
-    message_no = 0
     while True:
         try:
             line = input(f"\n{BOLD}You:{RESET} ").strip()
@@ -70,21 +101,41 @@ async def main() -> None:
             print(HELP)
             continue
 
-        message_no += 1
-        kwargs = {"text": line, "msg_type": "text"}
-        if line in ("1", "2", "3") and buttons and int(line) <= len(buttons):
-            button = buttons[int(line) - 1]
-            print(f"{DIM}  (tapped {button.title}){RESET}")
-            kwargs = {"button_id": button.id, "msg_type": "button"}
-
         with session_scope() as db:
-            replies = await handle_message(db, provider, args.wa_id, wa_message_id=None, **kwargs)
+            usage_before = db.scalar(select(func.coalesce(func.max(UsageLog.id), 0)))
+
+        try:
+            with session_scope() as db:
+                if line in ("1", "2", "3") and buttons and int(line) <= len(buttons):
+                    button = buttons[int(line) - 1]
+                    print(f"{DIM}  (tapped {button.title}){RESET}")
+                    replies = await handle_message(db, provider, args.wa_id, button_id=button.id, msg_type="button")
+                elif path := audio_path(line):
+                    if transcriber is None:
+                        transcriber = get_transcriber(transcriber_name)
+                    print(f"{DIM}  (sending voice note {path.name}, {path.stat().st_size // 1024} KB){RESET}")
+                    replies = await handle_voice_note(db, provider, transcriber, args.wa_id, path.read_bytes())
+                else:
+                    replies = await handle_message(db, provider, args.wa_id, text=line, msg_type="text")
+        except (LLMError, TranscriptionError) as exc:
+            print(f"{RED}  {exc}{RESET}")
+            continue
 
         buttons = []
         for reply in replies:
             print(f"\n{GREEN}OwoBook:{RESET}\n{render_plain(reply)}")
             if reply.buttons:
                 buttons = reply.buttons
+
+        with session_scope() as db:
+            rows = db.scalars(select(UsageLog).where(UsageLog.id > usage_before)).all()
+        if rows and any(r.provider != "fake" for r in rows):
+            cost = sum(r.est_cost_usd for r in rows)
+            toks = sum(r.input_tokens + r.output_tokens for r in rows)
+            audio = sum(r.audio_seconds for r in rows)
+            calls = sum(1 for r in rows if r.input_tokens or r.output_tokens)
+            extra = f", {audio:.1f}s audio" if audio else ""
+            print(f"{DIM}  cost: ${cost:.5f} ({calls} model call(s), {toks} tokens{extra}){RESET}")
 
 
 if __name__ == "__main__":

@@ -25,10 +25,15 @@ class Settings(BaseSettings):
     meta_api_base: str = "https://api.meta.ai/v1"
     meta_chat_model: str = "muse-spark-1.3"
     meta_transcribe_model: str = "muse-voice-transcribe-1.0"
+    meta_reasoning_effort: str = "low"  # Muse Spark always reasons; "low" keeps WhatsApp replies fast
+    llm_timeout_seconds: float = 45.0
+
+    # Transcription selection
+    transcriber: Literal["meta", "fake"] = "meta"
 
     # Baseten (Meta open-weights models)
     baseten_api_key: str = ""
-    baseten_base_url: str = ""
+    baseten_base_url: str = "https://inference.baseten.co/v1"
     baseten_model: str = ""
 
     # WhatsApp Cloud API

@@ -1,0 +1,36 @@
+{"id": "credit-basic", "text": "Mama Bisi collect 3 bags rice, she go pay 45k Friday", "expect": [{"tool": "record_sale", "customer": "Mama Bisi", "paid": false, "amount": 45000, "quantity": 3, "due": "Friday"}]}
+{"id": "credit-unit-price", "text": "Chidi carry 2 cartons indomie at 6500 each, he go pay tomorrow", "expect": [{"tool": "record_sale", "customer": "Chidi", "paid": false, "amount": 13000, "quantity": 2, "due": "tomorrow"}]}
+{"id": "cash-basic", "text": "Sold 5 crates of eggs 12k cash", "expect": [{"tool": "record_sale", "paid": true, "amount": 12000, "quantity": 5}]}
+{"id": "payment-basic", "text": "Mama Bisi don pay 20k", "expect": [{"tool": "record_payment", "customer": "Mama Bisi", "amount": 20000}]}
+{"id": "debtors", "text": "Who owe me money?", "expect": [{"tool": "list_debtors", "overdue_only": false}]}
+{"id": "summary-week", "text": "How much I sell this week?", "expect": [{"tool": "get_sales_summary", "period": "this_week"}]}
+{"id": "balance-basic", "text": "How much Mama Bisi owe?", "expect": [{"tool": "get_customer_balance", "customer": "Mama Bisi"}]}
+{"id": "credit-words-amount", "text": "Alhaji Musa take ten bags of cement, two hundred and fifty thousand naira, e go pay end of month", "expect": [{"tool": "record_sale", "customer": "Alhaji Musa", "paid": false, "amount": 250000, "quantity": 10, "due": "end of month"}]}
+{"id": "credit-next-tomorrow", "text": "Emeka collect 4 tins of tomato paste at 1.5k each, he go pay next tomorrow", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": false, "amount": 6000, "quantity": 4, "due": "next tomorrow"}]}
+{"id": "cash-the-man-paid", "text": "I sell 2 bags garri for 38k, the man pay cash", "expect": [{"tool": "record_sale", "paid": true, "amount": 38000, "quantity": 2}]}
+{"id": "payment-bring", "text": "Blessing bring 10k for her balance", "expect": [{"tool": "record_payment", "customer": "Blessing", "amount": 10000}]}
+{"id": "payment-clear", "text": "Iya Tola don clear her debt, she pay 15,000", "expect": [{"tool": "record_payment", "customer": "Iya Tola", "amount": 15000}]}
+{"id": "debtors-overdue", "text": "who never pay me wey don pass due date", "expect": [{"tool": "list_debtors", "overdue_only": true}]}
+{"id": "summary-today", "text": "How much I make today", "expect": [{"tool": "get_sales_summary", "period": "today"}]}
+{"id": "summary-yesterday", "text": "how much I sell yesterday", "expect": [{"tool": "get_sales_summary", "period": "yesterday"}]}
+{"id": "summary-month-english", "text": "Show me my sales for this month", "expect": [{"tool": "get_sales_summary", "period": "this_month"}]}
+{"id": "ask-no-amount", "text": "Chidi collect 1 carton of Peak milk", "expect": [{"tool": "ask_clarification"}]}
+{"id": "ask-no-customer", "text": "somebody collect 3 bags rice, 45k, e go pay Friday", "expect": [{"tool": "ask_clarification"}]}
+{"id": "expense-transport", "text": "I spend 3k for transport today", "expect": [{"tool": "record_expense", "amount": 3000}]}
+{"id": "credit-english", "text": "Mama Bisi took 2 bags of beans worth 60k, she'll pay next week", "expect": [{"tool": "record_sale", "customer": "Mama Bisi", "paid": false, "amount": 60000, "quantity": 2, "due": "next week"}]}
+{"id": "payment-million", "text": "Alhaji Musa paid me 1.2m", "expect": [{"tool": "record_payment", "customer": "Alhaji Musa", "amount": 1200000}]}
+{"id": "credit-words-saturday", "text": "Blessing collect five crates of eggs, fifteen thousand naira, she go pay on Saturday", "expect": [{"tool": "record_sale", "customer": "Blessing", "paid": false, "amount": 15000, "quantity": 5, "due": "Saturday"}]}
+{"id": "cash-paint", "text": "Sold 3 paint of rice for 9,500", "expect": [{"tool": "record_sale", "paid": true, "amount": 9500, "quantity": 3}]}
+{"id": "cash-named-customer", "text": "Emeka buy 2 cartons of noodles 13k, he don pay", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": true, "amount": 13000, "quantity": 2}]}
+{"id": "balance-pidgin", "text": "How much Chidi dey owe me?", "expect": [{"tool": "get_customer_balance", "customer": "Chidi"}]}
+{"id": "balance-remain", "text": "abeg how much money Iya Tola remain?", "expect": [{"tool": "get_customer_balance", "customer": "Iya Tola"}]}
+{"id": "credit-explicit-date", "text": "Mama Bisi go pay 30k on 5th November for the 2 bags of beans she collect", "expect": [{"tool": "record_sale", "customer": "Mama Bisi", "paid": false, "amount": 30000, "quantity": 2, "due": "5th November"}]}
+{"id": "expense-stock", "text": "I buy goods for my shop 50k", "expect": [{"tool": "record_expense", "amount": 50000}]}
+{"id": "debtors-who-and-who", "text": "who and who dey owe me", "expect": [{"tool": "list_debtors", "overdue_only": false}]}
+{"id": "two-payments", "text": "Chidi don pay 5k and Emeka don pay 2k", "expect": [{"tool": "record_payment", "customer": "Chidi", "amount": 5000}, {"tool": "record_payment", "customer": "Emeka", "amount": 2000}]}
+{"id": "two-sales", "text": "Mama Bisi collect 2 bags rice 30k she go pay Friday, Blessing collect 1 bag beans 25k she go pay Monday", "expect": [{"tool": "record_sale", "customer": "Mama Bisi", "paid": false, "amount": 30000, "due": "Friday"}, {"tool": "record_sale", "customer": "Blessing", "paid": false, "amount": 25000, "due": "Monday"}]}
+{"id": "payment-decimal-k", "text": "Chidi pay me 4.5k today", "expect": [{"tool": "record_payment", "customer": "Chidi", "amount": 4500}]}
+{"id": "credit-weeks", "text": "Iya Tola collect 1 bag semovita at 32k, she go pay in 2 weeks", "expect": [{"tool": "record_sale", "customer": "Iya Tola", "paid": false, "amount": 32000, "quantity": 1, "due": "in 2 weeks"}]}
+{"id": "ask-bare", "text": "Mama Bisi collect rice", "expect": [{"tool": "ask_clarification"}]}
+{"id": "chit-chat", "text": "How far, wetin you fit do?", "expect": []}
+{"id": "credit-no-due", "text": "Emeka collect 6 tubers of yam at 2k each", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": false, "amount": 12000, "quantity": 6}]}

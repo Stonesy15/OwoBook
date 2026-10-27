@@ -124,7 +124,7 @@ async def handle_message(
             trader.onboarded = True
             replies = [fmt.onboarding_reply(lang)]
             # If their very first message already looks like a record ("... 45k"), process it too.
-            if text and re.search(r"\d", text):
+            if text and re.search(r"\d", text) and len(text.split()) >= 3:
                 replies += await _run(db, provider, trader, text, msg_type, lang, inbound.id)
         elif not text or not text.strip():
             replies = [Reply(fmt.t(lang, "fallback"))]

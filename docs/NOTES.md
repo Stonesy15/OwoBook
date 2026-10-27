@@ -24,3 +24,16 @@ Decisions and findings that aren't obvious from the code. API findings get added
 ## Money rules (money.py)
 - `parse_amount` refuses anything with unknown words ("3 bags rice" → None), so the agent asks instead of guessing.
 - `#` and `N` prefixes are treated as naira (common Nigerian shorthand).
+
+## Agent design (Phase 1)
+- `agent/handler.py` is the single entry point for every inbound message (simulator now, WhatsApp webhook in Phase 3). It handles dedupe, onboarding, button taps, editing mode, logging, and the friendly error message.
+- **Replies come from tool results, not model text.** After a tool succeeds, the loop stops without another model call. That saves a round trip (latency and cost) and guarantees that numbers come from the DB. The loop only continues when a tool returns an error the model must fix or ask about.
+- Each agent run is wrapped in a DB savepoint: if anything crashes mid-way, half-written entries are rolled back and the trader gets "please try again".
+- The model gets a short recent history (last 6 text messages, last 20 minutes) so it can follow up on a clarifying question. Ledger data never comes from history — always from tools.
+- Close-but-different customer names ("Iya Bisi" vs "Mama Bisi", typos) make the tool refuse with a question. `new_customer=true` is set only after the trader confirms.
+- A payment from a name not in the book is refused (asks who), so typos don't create phantom customers.
+- Fix it → editing mode lasts for exactly one message, then returns to normal.
+- If a correction changes only the quantity, the total is recomputed from the saved price per unit ("no, na 3 cartons" at ₦6,500 each → ₦19,500).
+- A first message that already contains a number is processed as well as getting the onboarding reply, so it isn't lost.
+- `FakeProvider` is a regex stand-in for Muse Spark, good enough for the simulator and tests. It is not the product's intelligence.
+- Usage is logged by the agent loop for every model call (all providers), so cost reporting works the same everywhere.

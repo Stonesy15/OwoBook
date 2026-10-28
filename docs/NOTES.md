@@ -90,3 +90,14 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - Muse Spark often sends the string `"null"` for optional fields it doesn't use. `ToolArgs` drops those before validation. This also prevents creating a customer called "Null".
 - Prompt rule: when the trader answers a clarifying question, record straight away; don't ask them to confirm.
 - Evals: 39 cases (3 new part-payment cases). Both providers scored 39/39 on two runs. Muse Spark once recorded only one of the payments in "two-payments" (1 in about 6 runs).
+
+## WhatsApp Cloud API (checked 28 Oct 2026)
+- **Graph API v26.0** is current (released 29 Jul 2026). v21.0, as written in CLAUDE.md, is removed on 21 Jan 2027, so the default is now `v26.0`.
+- Signature: `X-Hub-Signature-256: sha256=<HMAC-SHA256(raw body, app secret)>`. Verification GET: `hub.mode=subscribe`, `hub.verify_token`, and we reply with `hub.challenge`.
+- Meta retries failed deliveries for up to 36 hours and may send duplicates, so we dedupe on the `wamid`. The dedupe check runs *before* downloading or transcribing audio, so a retry costs nothing.
+- Audio webhook: `messages[].audio = {id, mime_type: "audio/ogg; codecs=opus", sha256, voice: bool, url?}`. `url` is being rolled out gradually, so we always use `GET /{media-id}` then `GET url`, both with the Bearer token. The URL expires after 5 minutes, and audio is capped at 16 MB.
+- Reply buttons: ≤ 3 buttons, title ≤ 20 chars (unique), id ≤ 256, body ≤ 1024. Longer receipts go out as text followed by a short button message.
+- Tapping a reply button sends `type: "interactive"` with `interactive.button_reply.id`. A template quick-reply sends `type: "button"` with `button.payload`. Both are handled.
+- Read receipt plus typing indicator: `{"status": "read", "message_id", "typing_indicator": {"type": "text"}}`. Best effort; failures are ignored.
+- Without `WA_APP_SECRET`, signatures are checked only when `APP_ENV=production`. The server logs a warning at startup.
+- The database is committed *before* replies are sent, so a failed send never loses a record. Each trader has an asyncio lock, so their messages are processed in order.

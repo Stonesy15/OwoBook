@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     wa_phone_number_id: str = ""
     wa_app_secret: str = ""
     wa_verify_token: str = ""
-    wa_graph_version: str = "v21.0"
+    wa_graph_version: str = "v26.0"  # v21.0 is removed on 21 Jan 2027
     wa_reminder_template: str = ""
 
     @field_validator("database_url")

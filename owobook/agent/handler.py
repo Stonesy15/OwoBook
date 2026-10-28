@@ -181,6 +181,30 @@ async def handle_voice_note(
     return replies
 
 
+async def handle_unsupported(
+    db: Session, wa_id: str, *, msg_type: str, wa_message_id: str | None = None, now: datetime | None = None
+) -> list[Reply]:
+    """Stickers, locations, documents, (for now) images...: a short friendly pointer to what works."""
+    if already_seen(db, wa_message_id):
+        return []
+    trader, _ = ledger.get_or_create_trader(db, wa_id)
+    trader.last_inbound_at = now or utcnow()
+    lang = _trader_language(db, trader)
+    try:
+        with db.begin_nested():
+            _log_message(db, trader, "in", msg_type, f"[{msg_type}]", wa_message_id)
+    except IntegrityError:
+        return []
+    replies = []
+    if not trader.onboarded:
+        trader.onboarded = True
+        replies.append(fmt.onboarding_reply(lang))
+    replies.append(Reply(fmt.t(lang, "unsupported")))
+    for r in replies:
+        _log_message(db, trader, "out", "text", fmt.render_plain(r))
+    return replies
+
+
 async def _run(db: Session, provider: LLMProvider, trader: Trader, text: str, msg_type: str, lang: Lang,
                inbound_id: int) -> list[Reply]:
     ctx = AgentContext(

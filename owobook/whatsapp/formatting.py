@@ -78,6 +78,7 @@ _T = {
         "fallback": "Sorry, I didn't get that 🙏 Try something like \"Mama Bisi took 3 bags of rice, she'll pay 45k Friday\".",
         "error": "Sorry, something went wrong on my side 🙏 Please try again.",
         "didnt_hear": "Sorry, I couldn't hear that voice note well 🙏 Please send it again.",
+        "unsupported": "For now I understand voice notes and text 🙏 Just tell me what you sold or who paid.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You can start recording sales now.",
     },
     "pidgin": {
@@ -112,6 +113,7 @@ _T = {
         "fallback": "Abeg I no understand 🙏 Try like \"Mama Bisi collect 3 bags rice, she go pay 45k Friday\".",
         "error": "Abeg try again 🙏 Something no work well for my side.",
         "didnt_hear": "Abeg I no hear the voice note well 🙏 Send am again.",
+        "unsupported": "For now I fit understand voice note and text 🙏 Just talk wetin you sell or who pay.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You fit start to record your sales now.",
     },
 }

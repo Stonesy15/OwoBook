@@ -152,8 +152,12 @@ def _qty(q: float | None) -> str:
 
 
 def item_line(entry: Entry) -> str | None:
-    """'3 bags rice' from quantity/unit/description."""
-    parts = [_qty(entry.quantity), entry.unit or "", entry.item_description or ""]
+    """'3 bags rice' from quantity/unit/description. A unit that just repeats the item
+    ("3 charger charger", "2 crates crate") is dropped."""
+    unit, item = entry.unit or "", entry.item_description or ""
+    if unit and item and unit.lower().rstrip("s") == item.lower().rstrip("s"):
+        unit = ""
+    parts = [_qty(entry.quantity), unit, item]
     text = " ".join(p for p in parts if p).strip()
     return text or None
 

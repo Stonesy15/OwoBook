@@ -19,3 +19,12 @@ def test_button_ids_round_trip():
 def test_render_plain_numbers_buttons():
     text = render_plain(Reply("hi", entry_buttons(1)))
     assert "[1] Correct ✓" in text and "[3] Undo ↩️" in text
+
+
+def test_item_line_drops_a_unit_that_repeats_the_item():
+    from owobook.models import Entry
+    from owobook.whatsapp.formatting import item_line
+
+    assert item_line(Entry(quantity=3, unit="charger", item_description="charger")) == "3 charger"
+    assert item_line(Entry(quantity=2, unit="crates", item_description="crate")) == "2 crate"
+    assert item_line(Entry(quantity=3, unit="bags", item_description="rice")) == "3 bags rice"

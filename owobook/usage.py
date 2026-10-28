@@ -17,7 +17,8 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "muse-spark-1.3-contributor": (0.10, 0.20),
     "muse-spark-1.2-contributor": (0.10, 0.20),
     "fake-rules-1": (0.0, 0.0),
-    # Baseten: add your model's price from the Baseten Model APIs page.
+    # Baseten Model APIs, from baseten.co/pricing (28 Oct 2026).
+    "meta-models/muse-spark-open-1026": (1.25, 4.25),
 }
 # USD per audio minute. Muse Voice Transcribe: $0.18/hour, billed in whole seconds (rounded down).
 PRICES_PER_AUDIO_MIN: dict[str, float] = {

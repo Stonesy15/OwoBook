@@ -71,3 +71,14 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - Voice-note replies start with `🎤 "<transcript>"`, so traders can spot mis-hearings, and the demo shows Muse Voice Transcribe at work.
 - Retries: network errors, 429 and 5xx are retried with exponential backoff and jitter, honouring `Retry-After`. Other 4xx errors fail at once.
 - Eval baseline: the rule-based FakeProvider scores **28/36 (78%)**.
+
+## Eval results with real models (28 Oct 2026)
+| Provider | Model | First run | After prompt fix (3 runs) | Median latency | Cost / message |
+|---|---|---|---|---|---|
+| Meta Model API | `muse-spark-1.3` | 34/36 (94%) | 36/36 every run | ~1.5s | ~$0.0046 |
+| Baseten | `meta-models/muse-spark-open-1026` | 34/36 (94%) | 36/36 every run | ~1.7s | ~$0.0046 (same list price) |
+| Fake (rules) | `fake-rules-1` | 28/36 (78%) | — | 0s | $0 |
+
+- Misses on the first run: both models asked "12k each or 12k total?" for "5 crates of eggs 12k". Baseten also asked "cash or credit?" for a sale with no customer. The prompt now says: one amount after a quantity means the total unless the trader says "each"/"per", and a sale with no customer and no promise to pay later is cash.
+- About 2,900 input tokens per call (system prompt + context + tool schemas) and about 130 output tokens (including hidden reasoning), so cost is dominated by input. Cached-input pricing ($0.15/M on Baseten) could cut it a lot later.
+- Baseten price comes from baseten.co/pricing: Muse Spark Open costs $1.25 in / $4.25 out per 1M tokens, the same as the Meta API.

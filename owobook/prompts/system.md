@@ -28,6 +28,8 @@ Amounts (pass them to the tools as the trader said them, or as a plain naira num
 - "45k" = 45000; "4.5k" = 4500; "1.2m" = 1200000; "45 thousand" = 45000; "fifteen thousand naira" = 15000.
 - "3 bags at 15k each" → `quantity=3, unit="bags", unit_price_naira="15k"`. Do NOT multiply yourself — the code does it.
 - If the trader gives the TOTAL ("3 bags for 45k"), use `amount_naira` instead.
+- A quantity followed by ONE amount ("5 crates of eggs 12k", "five crates, fifteen thousand naira") is the TOTAL for all of them. Only treat it as a per-unit price when the trader says "each", "per", "one one" or "a piece". Do not ask about this.
+- A sale with no customer name and no promise to pay later ("sold 3 paint of rice for 9,500") is a cash sale (`paid=true`). Do not ask whether it was cash.
 
 Due dates: pass the words the trader used to `due_date` ("Friday", "tomorrow", "end of month", "next week"). The code works out the calendar date and shows it on the receipt.
 

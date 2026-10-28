@@ -206,3 +206,55 @@ async def test_fake_provider_rules(text, tool, expected):
     assert call_.name == tool
     for key, value in expected.items():
         assert call_.arguments.get(key) == value, (key, call_.arguments)
+
+
+# ---------- part-payments ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("args, total, paid_now", [
+    ({"amount_paid_naira": "60k", "balance_naira": "70k"}, 130_000, 60_000),   # paid + balance
+    ({"amount_naira": "50k", "amount_paid_naira": "20k"}, 50_000, 20_000),    # total + paid
+    ({"amount_naira": "50k", "balance_naira": "30k"}, 50_000, 20_000),        # total + balance
+    ({"quantity": 3, "unit_price_naira": "10k", "amount_paid_naira": "10k"}, 30_000, 10_000),
+])
+def test_sale_amounts_computed_in_code(args, total, paid_now):
+    from owobook.agent.tools import sale_amounts
+    got = sale_amounts(args.get("amount_naira"), args.get("unit_price_naira"), args.get("quantity"),
+                       args.get("amount_paid_naira"), args.get("balance_naira"))
+    assert got == (total * 100, paid_now * 100)
+
+
+def test_sale_amounts_that_dont_add_up_ask():
+    from owobook.agent.tools import ToolInputError, sale_amounts
+    with pytest.raises(ToolInputError):
+        sale_amounts("100k", None, None, "60k", "70k")
+
+
+async def test_part_paid_sale_gives_one_receipt(db):
+    await onboard(db)
+    provider = FakeProvider(script=[call(
+        "record_sale", customer_name="Iro", item_description="rice", quantity=3, unit="bags",
+        amount_paid_naira="60k", balance_naira="70k", paid=False, due_date="2026-10-30",
+    )])
+    replies = await say(db, "Iro buy 3 bags rice, e give me 60k, e go balance me 70k Friday", provider)
+    [receipt] = replies
+    assert "₦130,000 total" in receipt.text
+    assert "₦60,000" in receipt.text and "₦70,000 — owing" in receipt.text
+    assert len(receipt.buttons) == 3
+    assert db.scalar(select(func.count()).select_from(Entry)) == 1
+
+
+def test_null_strings_from_the_model_are_ignored(db):
+    from owobook.agent.tools import AgentContext, execute_tool
+    from owobook.dates import today_local
+    trader, _ = ledger.get_or_create_trader(db, WA)
+    ctx = AgentContext(db=db, trader=trader, lang="english", today=today_local())
+    result = execute_tool(ctx, "record_sale", {
+        "customer_name": "Chidi", "quantity": 2, "unit_price_naira": 6500, "amount_naira": "null",
+        "amount_paid_naira": "null", "balance_naira": "None", "due_date": "null", "paid": False,
+    })
+    assert not result.is_error, result.data
+    assert result.data["amount"] == "₦13,000" and result.data["due_date"] is None
+
+    result = execute_tool(ctx, "record_sale", {"customer_name": "null", "amount_naira": "5k", "paid": False})
+    assert result.is_error  # credit sale with no customer → ask who, never a customer called "Null"

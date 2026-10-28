@@ -34,3 +34,6 @@
 {"id": "ask-bare", "text": "Mama Bisi collect rice", "expect": [{"tool": "ask_clarification"}]}
 {"id": "chit-chat", "text": "How far, wetin you fit do?", "expect": []}
 {"id": "credit-no-due", "text": "Emeka collect 6 tubers of yam at 2k each", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": false, "amount": 12000, "quantity": 6}]}
+{"id": "part-paid-balance", "text": "Emeka buy 3 bags rice, e give me 60k, e go balance me 70k Friday", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": false, "amount": 130000, "paid_now": 60000, "quantity": 3, "due": "Friday"}]}
+{"id": "part-paid-total", "text": "Blessing collect 2 bags beans 50k, she pay 20k now, she go bring the rest Saturday", "expect": [{"tool": "record_sale", "customer": "Blessing", "paid": false, "amount": 50000, "paid_now": 20000, "due": "Saturday"}]}
+{"id": "part-paid-english", "text": "Chidi took 4 cartons of milk for 80k, he paid 30k and will pay the rest next week", "expect": [{"tool": "record_sale", "customer": "Chidi", "paid": false, "amount": 80000, "paid_now": 30000, "quantity": 4, "due": "next week"}]}

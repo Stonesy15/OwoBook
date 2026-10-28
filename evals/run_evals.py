@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from owobook import ledger  # noqa: E402
 from owobook.agent.loop import build_messages  # noqa: E402
-from owobook.agent.tools import TOOL_SPECS, AgentContext, ToolInputError, _total_kobo  # noqa: E402
+from owobook.agent.tools import TOOL_SPECS, AgentContext, ToolInputError, sale_amounts  # noqa: E402
 from owobook.config import get_settings  # noqa: E402
 from owobook.dates import resolve_due_date, today_local  # noqa: E402
 from owobook.db import Base, make_engine  # noqa: E402
@@ -50,14 +50,17 @@ def check_call(expected: dict, args: dict, today: date) -> list[str]:
             problems.append(f"customer {args.get('customer_name')!r} ≠ {expected['customer']!r}")
     if "paid" in expected and args.get("paid") != expected["paid"]:
         problems.append(f"paid {args.get('paid')} ≠ {expected['paid']}")
-    if "amount" in expected:
-        try:
-            kobo = _total_kobo(args.get("amount_naira"), args.get("unit_price_naira"), args.get("quantity"))
+    if "amount" in expected or "paid_now" in expected:
+        try:  # the same code path the bot uses: totals and part-payments are computed in code
+            kobo, paid_now = sale_amounts(args.get("amount_naira"), args.get("unit_price_naira"), args.get("quantity"),
+                                          args.get("amount_paid_naira"), args.get("balance_naira"))
         except ToolInputError:
-            kobo = None
-        if kobo != expected["amount"] * 100:
+            kobo, paid_now = None, 0
+        if "amount" in expected and kobo != expected["amount"] * 100:
             shown = f"₦{kobo / 100:,.0f}" if kobo else "none"
             problems.append(f"amount {shown} ≠ ₦{expected['amount']:,}")
+        if paid_now != expected.get("paid_now", 0) * 100:
+            problems.append(f"paid_now ₦{paid_now / 100:,.0f} ≠ ₦{expected.get('paid_now', 0):,}")
     if "quantity" in expected:
         try:
             ok = float(args.get("quantity")) == float(expected["quantity"])

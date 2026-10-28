@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from owobook import ledger
@@ -26,7 +26,18 @@ Amount = float | str  # the model may send 45000 or "45k"; we convert in code
 # ---------- argument schemas ---------------------------------------------------------------
 
 
-class RecordSale(BaseModel):
+class ToolArgs(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_null_strings(cls, data: Any) -> Any:
+        """Models sometimes send "null" (a string) for a field they meant to leave out."""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if not _blank(v)}
+        return data
+
+
+
+class RecordSale(ToolArgs):
     """Record a sale. paid=true for cash sales; paid=false when the customer took goods on credit
     ("collect", "carry", "go pay", "will pay")."""
 
@@ -38,14 +49,20 @@ class RecordSale(BaseModel):
     unit_price_naira: Amount | None = Field(
         None, description="Price PER UNIT when the trader says 'each'/'per bag'. Code multiplies by quantity."
     )
-    paid: bool = Field(description="true = paid now (cash/transfer); false = on credit (owing).")
+    paid: bool = Field(description="true = paid in full now (cash/transfer); false = all or part still owing.")
+    amount_paid_naira: Amount | None = Field(
+        None, description="Part-payment: money the customer paid ON THE SPOT for this sale, when some is still owing."
+    )
+    balance_naira: Amount | None = Field(
+        None, description="Part-payment: what the customer still owes for this sale ('balance me 70k'), if the trader says it."
+    )
     due_date: str | None = Field(
         None, description="When the customer will pay, exactly as said: 'Friday', 'tomorrow', 'end of month', or YYYY-MM-DD."
     )
     new_customer: bool = Field(False, description="true only if the trader confirmed this is a NEW customer.")
 
 
-class RecordPayment(BaseModel):
+class RecordPayment(ToolArgs):
     """Record money a customer paid towards what they owe ("don pay", "paid", "settle")."""
 
     customer_name: str
@@ -53,32 +70,32 @@ class RecordPayment(BaseModel):
     new_customer: bool = Field(False, description="true only if the trader confirmed this is a NEW customer.")
 
 
-class RecordExpense(BaseModel):
+class RecordExpense(ToolArgs):
     """Record money the trader spent on the business (transport, stock, shop rent, etc.)."""
 
     description: str
     amount_naira: Amount
 
 
-class GetCustomerBalance(BaseModel):
+class GetCustomerBalance(ToolArgs):
     """How much one customer owes the trader."""
 
     customer_name: str
 
 
-class ListDebtors(BaseModel):
+class ListDebtors(ToolArgs):
     """List customers who owe money, biggest first."""
 
     overdue_only: bool = Field(False, description="true to show only overdue or due-today debts.")
 
 
-class GetSalesSummary(BaseModel):
+class GetSalesSummary(ToolArgs):
     """Totals of cash sales, credit sales, money collected and expenses for a period."""
 
     period: Literal["today", "yesterday", "this_week", "last_week", "this_month", "last_month"] = "today"
 
 
-class UpdateEntry(BaseModel):
+class UpdateEntry(ToolArgs):
     """Correct an existing ledger entry. Only send the fields that change."""
 
     entry_id: int
@@ -88,24 +105,25 @@ class UpdateEntry(BaseModel):
     unit: str | None = None
     amount_naira: Amount | None = Field(None, description="New TOTAL in naira.")
     unit_price_naira: Amount | None = Field(None, description="New price per unit; code multiplies by quantity.")
+    amount_paid_naira: Amount | None = Field(None, description="New amount paid on the spot (credit sales).")
     due_date: str | None = None
     paid: bool | None = None
     new_customer: bool = False
 
 
-class DeleteEntry(BaseModel):
+class DeleteEntry(ToolArgs):
     """Remove (undo) a ledger entry."""
 
     entry_id: int
 
 
-class AskClarification(BaseModel):
+class AskClarification(ToolArgs):
     """Ask the trader ONE short question when the amount, customer, or meaning is unclear. Never guess numbers."""
 
     question: str
 
 
-class SaveProfile(BaseModel):
+class SaveProfile(ToolArgs):
     """Save the trader's own name / shop name / preferred language when they tell you."""
 
     name: str | None = None
@@ -173,9 +191,14 @@ class ToolInputError(Exception):
         self.question = question
 
 
+def _blank(value: Any) -> bool:
+    """Models sometimes send the string "null" (or "") for a field they meant to leave out."""
+    return value is None or (isinstance(value, str) and value.strip().lower() in ("", "null", "none", "n/a"))
+
+
 def to_kobo(value: Amount | None) -> int | None:
     """Model-supplied amount → kobo. Accepts 45000, '45000', '45k', 'forty five thousand'."""
-    if value is None or value == "":
+    if _blank(value):
         return None
     if isinstance(value, (int, float)):
         kobo = naira_to_kobo(value)
@@ -194,8 +217,36 @@ def _total_kobo(amount: Amount | None, unit_price: Amount | None, quantity: floa
     return to_kobo(amount)
 
 
+def sale_amounts(
+    amount: Amount | None,
+    unit_price: Amount | None,
+    quantity: float | None,
+    paid_now: Amount | None = None,
+    balance: Amount | None = None,
+) -> tuple[int | None, int]:
+    """(total_kobo, paid_now_kobo) for a sale, computed in code from what the trader said.
+
+    "gave me 60k, balance 70k" → total ₦130,000, paid ₦60,000. If the trader states all three
+    numbers and they don't add up, we ask instead of picking one."""
+    total = _total_kobo(amount, unit_price, quantity)
+    paid_k = to_kobo(paid_now) or 0
+    balance_k = to_kobo(balance)
+    if balance_k is not None:
+        if total is None:
+            total = paid_k + balance_k
+        elif not paid_k:
+            paid_k = total - balance_k
+        elif paid_k + balance_k != total:
+            raise ToolInputError(
+                f"{format_naira(paid_k)} + {format_naira(balance_k)} no be {format_naira(total)}. Wetin be the full price?"
+            )
+        if paid_k < 0:
+            raise ToolInputError("The balance pass the price. Wetin be the full price?")
+    return total, paid_k
+
+
 def _due(text: str | None, today: date) -> date | None:
-    if not text:
+    if _blank(text):
         return None
     d = resolve_due_date(text, today)
     if d is None:
@@ -230,19 +281,21 @@ def execute_tool(ctx: AgentContext, name: str, raw_args: dict[str, Any]) -> Tool
 
 
 def _record_sale(ctx: AgentContext, a: RecordSale) -> ToolResult:
-    amount = _total_kobo(a.amount_naira, a.unit_price_naira, a.quantity)
+    amount, paid_now = sale_amounts(a.amount_naira, a.unit_price_naira, a.quantity, a.amount_paid_naira, a.balance_naira)
     if amount is None:
         return _error("How much e cost?")
+    paid = a.paid and not paid_now  # a part-payment means some is still owing
     entry = ledger.record_sale(
         ctx.db,
         ctx.trader,
         amount_kobo=amount,
-        paid=a.paid,
+        paid=paid,
+        paid_now_kobo=paid_now,
         customer_name=a.customer_name,
         item_description=a.item_description,
         quantity=a.quantity,
         unit=a.unit,
-        due_date=None if a.paid else _due(a.due_date, ctx.today),
+        due_date=None if paid else _due(a.due_date, ctx.today),
         new_customer=a.new_customer,
         source=ctx.source,
         raw_text=ctx.raw_text,
@@ -254,6 +307,7 @@ def _record_sale(ctx: AgentContext, a: RecordSale) -> ToolResult:
             "entry_id": entry.id,
             "type": entry.type,
             "amount": format_naira(entry.amount_kobo),
+            "paid_now": format_naira(entry.paid_now_kobo) if entry.paid_now_kobo else None,
             "customer": entry.customer.display_name if entry.customer else None,
             "due_date": entry.due_date.isoformat() if entry.due_date else None,
             "customer_total_owed": format_naira(balance) if balance is not None else None,
@@ -365,6 +419,7 @@ def _update_entry(ctx: AgentContext, a: UpdateEntry) -> ToolResult:
         quantity=a.quantity,
         unit=a.unit,
         amount_kobo=amount,
+        paid_now_kobo=to_kobo(a.amount_paid_naira),
         paid=a.paid,
         **fields,
     )
@@ -426,6 +481,8 @@ def describe_entry(entry, today: date) -> str:
     if item := fmt.item_line(entry):
         parts.append(item)
     parts.append(format_naira(entry.amount_kobo))
+    if entry.paid_now_kobo:
+        parts.append(f"paid {format_naira(entry.paid_now_kobo)} on the spot")
     if entry.due_date:
         parts.append(f"due {format_date(entry.due_date, today)}")
     return " · ".join(parts)

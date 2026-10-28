@@ -52,6 +52,8 @@ _T = {
         "expense_recorded": "✅ Expense recorded",
         "owing": "owing",
         "paid_cash": "paid (cash)",
+        "sale_total": "total",
+        "paid_now": "paid now",
         "received": "received",
         "due": "Due",
         "no_due": "No due date",
@@ -84,6 +86,8 @@ _T = {
         "expense_recorded": "✅ Expense don enter",
         "owing": "owing",
         "paid_cash": "paid (cash)",
+        "sale_total": "total",
+        "paid_now": "don pay for hand",
         "received": "collected",
         "due": "Due",
         "no_due": "No date to pay",
@@ -168,8 +172,16 @@ def sale_receipt(
         lines.append(f"👤 {customer.display_name}")
     if item := item_line(entry):
         lines.append(f"🛒 {item}")
-    if entry.type == EntryType.CREDIT_SALE:
+    if entry.type == EntryType.CREDIT_SALE and entry.paid_now_kobo:
+        # Part-paid: show the full price, what was paid on the spot, and what's left — all from the DB.
+        lines += [
+            f"💰 {format_naira(entry.amount_kobo)} {t(lang, 'sale_total')}",
+            f"💵 {format_naira(entry.paid_now_kobo)} {t(lang, 'paid_now')}",
+            f"⏳ {format_naira(entry.amount_kobo - entry.paid_now_kobo)} — {t(lang, 'owing')}",
+        ]
+    elif entry.type == EntryType.CREDIT_SALE:
         lines.append(f"💰 {format_naira(entry.amount_kobo)} — {t(lang, 'owing')}")
+    if entry.type == EntryType.CREDIT_SALE:
         if entry.due_date:
             lines.append(f"📅 {t(lang, 'due')}: {format_date(entry.due_date, today)}")
         else:

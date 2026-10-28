@@ -97,6 +97,8 @@ class Entry(Base):
     quantity: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str | None] = mapped_column(String(32))
     amount_kobo: Mapped[int] = mapped_column(BigInteger)
+    # Credit sales only: money paid on the spot ("he give me 60k, balance 70k"). Owing = amount − paid_now.
+    paid_now_kobo: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     due_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(16), default=EntryStatus.PENDING)
     source: Mapped[str] = mapped_column(String(16), default=EntrySource.TEXT)

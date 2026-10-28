@@ -179,6 +179,7 @@ def record_sale(
     *,
     amount_kobo: int,
     paid: bool,
+    paid_now_kobo: int = 0,
     customer_name: str | None = None,
     item_description: str | None = None,
     quantity: float | None = None,
@@ -189,9 +190,17 @@ def record_sale(
     raw_text: str | None = None,
     now: datetime | None = None,
 ) -> Entry:
-    """Record a cash sale (paid=True) or credit sale (paid=False, needs a customer)."""
+    """Record a cash sale (paid=True) or credit sale (paid=False, needs a customer).
+
+    A credit sale can be part-paid: `paid_now_kobo` is what the customer paid on the spot.
+    Paying it all on the spot makes it a cash sale."""
     if amount_kobo <= 0:
         raise LedgerError("Amount must be positive", question="How much e cost?")
+    _check_paid_now(amount_kobo, paid_now_kobo)
+    if paid_now_kobo == amount_kobo:
+        paid, paid_now_kobo = True, 0
+    if paid:
+        paid_now_kobo = 0
     if not paid and not customer_name:
         raise LedgerError("Credit sale without customer", question="Who collect am on credit?")
     customer = (
@@ -207,10 +216,21 @@ def record_sale(
         quantity=quantity,
         unit=unit,
         amount_kobo=amount_kobo,
+        paid_now_kobo=paid_now_kobo,
         due_date=None if paid else due_date,
         source=source,
         raw_text=raw_text,
     )
+
+
+def _check_paid_now(amount_kobo: int, paid_now_kobo: int) -> None:
+    if paid_now_kobo < 0:
+        raise LedgerError("Paid-now amount is negative", question="How much dem pay for hand?")
+    if paid_now_kobo > amount_kobo:
+        raise LedgerError(
+            "Paid-now amount is more than the sale total",
+            question="The money wey dem pay pass the price. How much be the full price?",
+        )
 
 
 def record_payment(
@@ -286,6 +306,7 @@ def update_entry(
     quantity: float | None = None,
     unit: str | None = None,
     amount_kobo: int | None = None,
+    paid_now_kobo: int | None = None,
     due_date: date | None | object = _UNSET,
     paid: bool | None = None,
 ) -> Entry:
@@ -314,6 +335,14 @@ def update_entry(
         entry.type = EntryType.CASH_SALE if paid else EntryType.CREDIT_SALE
         if paid:
             entry.due_date = None
+    if paid_now_kobo is not None and entry.type == EntryType.CREDIT_SALE:
+        entry.paid_now_kobo = paid_now_kobo
+    if entry.type == EntryType.CREDIT_SALE:
+        _check_paid_now(entry.amount_kobo, entry.paid_now_kobo)
+        if entry.paid_now_kobo == entry.amount_kobo:  # fully paid after all → cash sale
+            entry.type, entry.due_date = EntryType.CASH_SALE, None
+    if entry.type != EntryType.CREDIT_SALE:
+        entry.paid_now_kobo = 0
     if due_date is not _UNSET and entry.type == EntryType.CREDIT_SALE:
         entry.due_date = due_date
     entry.status = EntryStatus.PENDING
@@ -354,14 +383,14 @@ def recent_entries(db: Session, trader: Trader, limit: int = 5) -> list[Entry]:
 # ---------- reads -------------------------------------------------------------------------
 
 _signed_amount = case(
-    (Entry.type == EntryType.CREDIT_SALE, Entry.amount_kobo),
+    (Entry.type == EntryType.CREDIT_SALE, Entry.amount_kobo - Entry.paid_now_kobo),
     (Entry.type == EntryType.PAYMENT, -Entry.amount_kobo),
     else_=0,
 )
 
 
 def customer_balance(db: Session, trader: Trader, customer: Customer) -> int:
-    """Credit sales minus payments, in kobo (pending + confirmed; undone entries ignored)."""
+    """Credit sales (less anything paid on the spot) minus payments, in kobo (pending + confirmed; undone entries ignored)."""
     total = db.scalar(
         select(func.coalesce(func.sum(_signed_amount), 0)).where(
             Entry.trader_id == trader.id,
@@ -390,10 +419,11 @@ def outstanding_sales(db: Session, trader: Trader, customer: Customer) -> list[t
     paid = sum(e.amount_kobo for e in entries if e.type == EntryType.PAYMENT)
     out = []
     for sale in (e for e in entries if e.type == EntryType.CREDIT_SALE):
-        covered = min(paid, sale.amount_kobo)
+        owed = sale.amount_kobo - sale.paid_now_kobo
+        covered = min(paid, owed)
         paid -= covered
-        if sale.amount_kobo - covered > 0:
-            out.append((sale, sale.amount_kobo - covered))
+        if owed - covered > 0:
+            out.append((sale, owed - covered))
     return out
 
 
@@ -452,7 +482,7 @@ class SalesSummary:
 def sales_summary(db: Session, trader: Trader, period: str, today: date | None = None) -> SalesSummary:
     start, end = period_bounds(period, today)
     rows = db.execute(
-        select(Entry.type, func.sum(Entry.amount_kobo), func.count())
+        select(Entry.type, func.sum(Entry.amount_kobo), func.count(), func.sum(Entry.paid_now_kobo))
         .where(
             Entry.trader_id == trader.id,
             Entry.status != EntryStatus.DELETED,
@@ -462,14 +492,15 @@ def sales_summary(db: Session, trader: Trader, period: str, today: date | None =
         .group_by(Entry.type)
     ).all()
     s = SalesSummary(period=period)
-    for type_, total, count in rows:
+    for type_, total, count, paid_now in rows:
         total = int(total or 0)
+        s.collected_kobo += int(paid_now or 0)  # money paid on the spot for credit sales
         if type_ == EntryType.CASH_SALE:
             s.cash_sales_kobo, s.sale_count = total, s.sale_count + count
         elif type_ == EntryType.CREDIT_SALE:
             s.credit_sales_kobo, s.sale_count = total, s.sale_count + count
         elif type_ == EntryType.PAYMENT:
-            s.collected_kobo = total
+            s.collected_kobo += total
         elif type_ == EntryType.EXPENSE:
             s.expenses_kobo = total
     return s

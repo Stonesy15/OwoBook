@@ -160,3 +160,54 @@ def test_editing_session(db, trader):
     assert sess.mode == "editing" and sess.editing_entry_id == entry.id
     ledger.stop_editing(db, trader)
     assert sess.mode == "normal" and sess.editing_entry_id is None
+
+
+# ---------- part-payments ------------------------------------------------------------------
+
+
+def test_part_paid_sale_only_owes_the_rest(db, trader):
+    entry = ledger.record_sale(
+        db, trader, customer_name="Iro", amount_kobo=130_000_00, paid_now_kobo=60_000_00, paid=False,
+        due_date=date(2026, 10, 30), now=at(27),
+    )
+    assert entry.type == EntryType.CREDIT_SALE
+    assert ledger.customer_balance(db, trader, entry.customer) == 70_000_00
+    [(sale_, remaining)] = ledger.outstanding_sales(db, trader, entry.customer)
+    assert sale_.id == entry.id and remaining == 70_000_00
+    [debtor] = ledger.list_debtors(db, trader, today=TUE)
+    assert debtor.balance_kobo == 70_000_00 and debtor.next_due == date(2026, 10, 30)
+
+    # a later payment of the balance clears it
+    ledger.record_payment(db, trader, customer_name="Iro", amount_kobo=70_000_00, now=at(28))
+    assert ledger.customer_balance(db, trader, entry.customer) == 0
+    assert ledger.list_debtors(db, trader, today=TUE) == []
+
+
+def test_part_payment_counts_as_collected_in_summary(db, trader):
+    ledger.record_sale(db, trader, customer_name="Iro", amount_kobo=130_000_00, paid_now_kobo=60_000_00,
+                       paid=False, now=at(27))
+    ledger.record_payment(db, trader, customer_name="Iro", amount_kobo=10_000_00, now=at(27, 12))
+    s = ledger.sales_summary(db, trader, "today", TUE)
+    assert s.credit_sales_kobo == 130_000_00
+    assert s.collected_kobo == 70_000_00  # 60k on the spot + 10k payment
+
+
+def test_paying_everything_on_the_spot_is_a_cash_sale(db, trader):
+    entry = ledger.record_sale(db, trader, customer_name="Iro", amount_kobo=50_000_00, paid_now_kobo=50_000_00,
+                               paid=False, due_date=date(2026, 10, 30))
+    assert entry.type == EntryType.CASH_SALE and entry.paid_now_kobo == 0 and entry.due_date is None
+
+
+def test_paid_now_more_than_price_is_rejected(db, trader):
+    with pytest.raises(ledger.LedgerError):
+        ledger.record_sale(db, trader, customer_name="Iro", amount_kobo=50_000_00, paid_now_kobo=60_000_00, paid=False)
+
+
+def test_edit_paid_now(db, trader):
+    entry = ledger.record_sale(db, trader, customer_name="Iro", amount_kobo=130_000_00, paid_now_kobo=60_000_00,
+                               paid=False)
+    ledger.update_entry(db, trader, entry.id, paid_now_kobo=80_000_00)
+    assert ledger.customer_balance(db, trader, entry.customer) == 50_000_00
+    ledger.update_entry(db, trader, entry.id, paid=True)  # "e don pay everything"
+    assert entry.type == EntryType.CASH_SALE and entry.paid_now_kobo == 0
+    assert ledger.customer_balance(db, trader, entry.customer) == 0

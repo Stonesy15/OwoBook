@@ -82,3 +82,11 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - Misses on the first run: both models asked "12k each or 12k total?" for "5 crates of eggs 12k". Baseten also asked "cash or credit?" for a sale with no customer. The prompt now says: one amount after a quantity means the total unless the trader says "each"/"per", and a sale with no customer and no promise to pay later is cash.
 - About 2,900 input tokens per call (system prompt + context + tool schemas) and about 130 output tokens (including hidden reasoning), so cost is dominated by input. Cached-input pricing ($0.15/M on Baseten) could cut it a lot later.
 - Baseten price comes from baseten.co/pricing: Muse Spark Open costs $1.25 in / $4.25 out per 1M tokens, the same as the Meta API.
+
+## Part-payments (28 Oct 2026)
+- "He give me 60k, he go balance me 70k Friday" is ONE credit sale: `amount_kobo` = full price, `paid_now_kobo` = paid on the spot. Owing = amount − paid_now. One entry means one receipt, and Correct / Fix it / Undo act on the whole sale.
+- The model passes the numbers as said (`amount_paid_naira` plus `amount_naira` or `balance_naira`), and `tools.sale_amounts` does the arithmetic. If the trader states all three and they don't add up, OwoBook asks.
+- Money paid on the spot counts as "collected" in sales summaries. Paying everything on the spot turns the sale into a cash sale.
+- Muse Spark often sends the string `"null"` for optional fields it doesn't use. `ToolArgs` drops those before validation. This also prevents creating a customer called "Null".
+- Prompt rule: when the trader answers a clarifying question, record straight away; don't ask them to confirm.
+- Evals: 39 cases (3 new part-payment cases). Both providers scored 39/39 on two runs. Muse Spark once recorded only one of the payments in "two-payments" (1 in about 6 runs).

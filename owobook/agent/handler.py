@@ -46,7 +46,7 @@ def already_seen(db: Session, wa_message_id: str | None) -> bool:
     ) is not None
 
 
-def _trader_language(db: Session, trader: Trader) -> Lang:
+def trader_language(db: Session, trader: Trader) -> Lang:
     """Language for replies that have no text to mirror (button taps): use the last thing they wrote."""
     last_text = db.scalar(
         select(MessageLog.content)
@@ -58,6 +58,11 @@ def _trader_language(db: Session, trader: Trader) -> Lang:
 
 
 def handle_button(db: Session, trader: Trader, button_id: str, lang: Lang) -> list[Reply]:
+    if "remind" in button_id.lower():  # quick reply on the reminder template ("Show reminders")
+        from owobook import reminders
+
+        today = today_local()
+        return reminders.reminder_replies(db, trader, reminders.debtors_due(db, trader, today), lang, today)
     parsed = fmt.parse_button_id(button_id)
     if not parsed:
         return [Reply(fmt.t(lang, "fallback"))]
@@ -118,7 +123,7 @@ async def handle_message(
         log.info("duplicate message %s ignored (race)", wa_message_id)
         return []
 
-    lang = fmt.detect_language(text, trader.language_pref) if text else _trader_language(db, trader)
+    lang = fmt.detect_language(text, trader.language_pref) if text else trader_language(db, trader)
     try:
         if button_id:
             replies = handle_button(db, trader, button_id, lang)
@@ -158,7 +163,7 @@ async def handle_voice_note(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
-    lang = _trader_language(db, trader)
+    lang = trader_language(db, trader)
     keywords = [c.display_name for c in ledger.list_customers(db, trader)][:60]
     keywords += [x for x in (trader.name, trader.shop_name) if x]
     try:
@@ -189,7 +194,7 @@ async def handle_unsupported(
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
     trader.last_inbound_at = now or utcnow()
-    lang = _trader_language(db, trader)
+    lang = trader_language(db, trader)
     try:
         with db.begin_nested():
             _log_message(db, trader, "in", msg_type, f"[{msg_type}]", wa_message_id)

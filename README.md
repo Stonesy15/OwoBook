@@ -47,6 +47,18 @@ uv run python evals/run_evals.py --provider baseten
 
 The ngrok URL changes each time ngrok restarts (unless you use a free static domain). When it changes, update the callback URL in step 6.
 
+## Debt reminders
+
+Every day at **08:00 Africa/Lagos**, the server messages each trader about debts due today or overdue. The trader gets a heads-up, then a polite message for each customer that they can forward. OwoBook never messages customers.
+
+```bash
+uv run python scripts/seed_demo.py --reset                  # demo ledger for the first ALLOWED_WA_IDS number
+uv run python scripts/run_reminders.py --dry-run            # see this morning's reminders, send nothing
+uv run python scripts/run_reminders.py --wa-id 234801...    # send them now over WhatsApp
+```
+
+WhatsApp only allows free-form messages within 24 hours of the trader's last message. So send OwoBook any message first, or set `WA_REMINDER_TEMPLATE` to an approved template (see `.env.example`). In the simulator, type `/reminders`.
+
 ## How a message flows
 
 `POST /webhook` → check `X-Hub-Signature-256` → reply `200` at once → in the background, one message at a time per trader:

@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     wa_verify_token: str = ""
     wa_graph_version: str = "v26.0"  # v21.0 is removed on 21 Jan 2027
     wa_reminder_template: str = ""
+    wa_reminder_template_lang: str = "en"
+
+    # Reminders
+    enable_scheduler: bool = True  # daily job inside the web server
+    reminder_hour: int = 8  # Africa/Lagos
+    task_token: str = ""  # lets an external cron call POST /tasks/reminders (header X-Task-Token)
 
     @field_validator("database_url")
     @classmethod

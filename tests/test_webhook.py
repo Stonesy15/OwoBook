@@ -36,6 +36,7 @@ def settings(**kw) -> Settings:
     base = dict(
         _env_file=None, wa_app_secret=SECRET, wa_verify_token="verify-me", wa_access_token="EAAG-test",
         wa_phone_number_id="555", wa_graph_version="v26.0", llm_provider="fake", transcriber="fake",
+        enable_scheduler=False, task_token="task-secret",
     )
     return Settings(**{**base, **kw})
 

@@ -9,7 +9,7 @@
 Type a message and press Enter. To send a voice note, type (or drag in) the path to an
 audio file (.ogg .opus .m4a .mp3 .wav). When a reply has buttons, type 1, 2 or 3 to tap one.
 After each turn the simulator prints the model/transcription cost of that message.
-Commands: /help, /quit
+Commands: /reminders (show this morning's debt reminders), /help, /quit
 """
 
 import argparse
@@ -25,9 +25,10 @@ from sqlalchemy import func, select  # noqa: E402
 
 from owobook.agent.handler import handle_message, handle_voice_note  # noqa: E402
 from owobook.config import get_settings  # noqa: E402
-from owobook.db import migrate, session_scope  # noqa: E402
+from owobook.db import SessionLocal, migrate, session_scope  # noqa: E402
 from owobook.llm import LLMError, get_provider  # noqa: E402
 from owobook.models import UsageLog  # noqa: E402
+from owobook.reminders import run_reminders  # noqa: E402
 from owobook.transcribe import TranscriptionError, get_transcriber  # noqa: E402
 from owobook.whatsapp.formatting import render_plain  # noqa: E402
 
@@ -43,7 +44,7 @@ HELP = f"""{DIM}Try:
   How much I sell this week?
   How much Mama Bisi owe?
   ~/Downloads/voice-note.ogg      ← a path to an audio file sends it as a voice note
-Type 1/2/3 to tap a button. /quit to exit.{RESET}"""
+Type 1/2/3 to tap a button. /reminders shows the 08:00 debt reminders. /quit to exit.{RESET}"""
 
 
 def audio_path(line: str) -> Path | None:
@@ -99,6 +100,13 @@ async def main() -> None:
             break
         if line == "/help":
             print(HELP)
+            continue
+        if line == "/reminders":
+            results = await run_reminders(SessionLocal, None, settings, dry_run=True, only_wa_id=args.wa_id)
+            if not results:
+                print(f"{DIM}  (no debts due today or overdue — nothing would be sent at 08:00){RESET}")
+            for reply in (results[0].replies if results else []):
+                print(f"\n{GREEN}OwoBook (08:00 reminder):{RESET}\n{render_plain(reply)}")
             continue
 
         with session_scope() as db:

@@ -5,10 +5,12 @@
 GET  /webhook  — Meta's one-time verification (hub.challenge)
 POST /webhook  — inbound messages. We check the signature, answer 200 at once, and process
                  each message in the background (Meta retries slow or failed webhooks).
+POST /tasks/reminders — run today's reminders now (needs X-Task-Token = TASK_TOKEN)
 GET  /health   — for uptime checks and the deploy platform
 """
 
 import asyncio
+import hmac
 import json
 import logging
 from collections import defaultdict
@@ -16,6 +18,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
@@ -24,6 +28,7 @@ from owobook.agent.handler import already_seen, handle_message, handle_unsupport
 from owobook.config import Settings, get_settings, mask_secret
 from owobook.llm import get_provider
 from owobook.llm.base import LLMProvider
+from owobook.reminders import run_reminders
 from owobook.transcribe import Transcriber, get_transcriber
 from owobook.whatsapp import formatting as fmt
 from owobook.whatsapp.client import WhatsAppClient
@@ -79,7 +84,10 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
         )
         if not s.wa_app_secret:
             log.warning("WA_APP_SECRET is not set: webhook signatures are NOT checked (development only)")
+        scheduler = start_scheduler(app.state.services) if s.enable_scheduler else None
         yield
+        if scheduler:
+            scheduler.shutdown(wait=False)
         await app.state.services.whatsapp.aclose()
 
     app = FastAPI(title="OwoBook", lifespan=lifespan)
@@ -87,6 +95,16 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
     @app.get("/health")
     async def health() -> dict:
         return {"ok": True}
+
+    @app.post("/tasks/reminders")
+    async def trigger_reminders(request: Request, background: BackgroundTasks) -> Response:
+        """For an external cron (e.g. if the host sleeps): needs header X-Task-Token = TASK_TOKEN."""
+        services: Services = request.app.state.services
+        token = services.settings.task_token
+        if not token or not hmac.compare_digest(request.headers.get("x-task-token", ""), token):
+            return PlainTextResponse("forbidden", status_code=403)
+        background.add_task(reminders_job, services)
+        return PlainTextResponse("started", status_code=202)
 
     @app.get("/webhook")
     async def verify(request: Request) -> Response:
@@ -116,6 +134,27 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
         return PlainTextResponse("ok")  # always 200 fast, so Meta doesn't retry
 
     return app
+
+
+async def reminders_job(services: Services) -> None:
+    """The daily reminder run (scheduler, /tasks/reminders). Never raises."""
+    try:
+        await run_reminders(services.session_factory, services.whatsapp, services.settings)
+    except Exception:
+        log.exception("daily reminders failed")
+
+
+def start_scheduler(services: Services) -> AsyncIOScheduler:
+    s = services.settings
+    scheduler = AsyncIOScheduler(timezone=s.timezone)
+    scheduler.add_job(
+        reminders_job, CronTrigger(hour=s.reminder_hour, minute=0, timezone=s.timezone), args=[services],
+        id="daily_reminders", coalesce=True, max_instances=1, misfire_grace_time=3600,
+    )
+    scheduler.start()
+    log.info("daily reminders scheduled at %02d:00 %s (next: %s)", s.reminder_hour, s.timezone,
+             scheduler.get_job("daily_reminders").next_run_time)
+    return scheduler
 
 
 async def process_inbound(services: Services, msg: InboundMessage) -> None:

@@ -101,3 +101,13 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - Read receipt plus typing indicator: `{"status": "read", "message_id", "typing_indicator": {"type": "text"}}`. Best effort; failures are ignored.
 - Without `WA_APP_SECRET`, signatures are checked only when `APP_ENV=production`. The server logs a warning at startup.
 - The database is committed *before* replies are sent, so a failed send never loses a record. Each trader has an asyncio lock, so their messages are processed in order.
+
+## Reminders (Phase 4, 28 Oct 2026)
+- APScheduler `AsyncIOScheduler` runs inside the web server: a cron job at `REMINDER_HOUR` (08:00), timezone Africa/Lagos, with `coalesce`, `max_instances=1` and a 1-hour `misfire_grace_time`. Turn it off with `ENABLE_SCHEDULER=false`.
+- If the host sleeps (free tiers), an external cron can call `POST /tasks/reminders` with header `X-Task-Token: $TASK_TOKEN`. Without a token configured, the endpoint always returns 403.
+- Who gets a reminder: customers with a balance whose earliest unpaid due date is today or earlier (FIFO, so a part-paid old debt still counts). Due-today debts come first, then the longest overdue. At most 5 forwardable drafts; the rest are summarised.
+- The trader gets one heads-up, then one plain-text draft per customer, so each can be forwarded on its own. Drafts follow the trader's language (English or Pidgin) and name the shop and items.
+- 24h window: `last_inbound_at` < 24h ago → free-form. Otherwise, if `WA_REMINDER_TEMPLATE` is set → send the template with 3 body params (trader name, number of customers, total). Otherwise log and skip, unlogged, so it goes out once a template exists. A template quick-reply containing "remind" sends the drafts.
+- Once a day: sent reminders are logged in `messages_log` with type `reminder`, and the job skips traders already reminded since Lagos midnight. Use `--force` to resend.
+- `scripts/run_reminders.py --dry-run` and the simulator's `/reminders` show the messages without sending anything.
+- `scripts/seed_demo.py` builds a week relative to today: Mama Bisi due today (part-paid), Alhaji Musa and Iya Tola overdue, Chidi and Emeka due later (Emeka part-paid), Blessing cleared, 8 cash sales, 2 expenses.

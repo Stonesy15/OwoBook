@@ -5,6 +5,7 @@ bundled by the imageio-ffmpeg package)."""
 import asyncio
 import io
 import shutil
+import tempfile
 import wave
 from functools import lru_cache
 
@@ -45,24 +46,34 @@ def wav_duration_seconds(data: bytes) -> float:
 
 
 async def to_wav(data: bytes, timeout: float = 30.0) -> bytes:
-    """Convert any audio (OGG/Opus, M4A, MP3, WAV...) to mono 16-bit 24 kHz WAV."""
+    """Convert any audio (OGG/Opus, M4A, MP3, WAV...) to mono 16-bit 24 kHz WAV.
+
+    The input goes through a temp file, not a pipe: M4A/MP4 files (e.g. iPhone Voice Memos)
+    often keep their index at the end, which ffmpeg can't reach when reading from a pipe."""
     if is_target_wav(data):
         return data
-    proc = await asyncio.create_subprocess_exec(
-        ffmpeg_path(), "-hide_banner", "-loglevel", "error",
-        "-i", "pipe:0",
-        "-ac", "1", "-ar", str(TARGET_RATE), "-c:a", "pcm_s16le", "-map_metadata", "-1",
-        "-f", "wav", "pipe:1",
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(data), timeout)
-    except asyncio.TimeoutError as exc:
-        proc.kill()
-        raise AudioError("ffmpeg timed out") from exc
+    with tempfile.NamedTemporaryFile(suffix=".audio") as src:
+        src.write(data)
+        src.flush()
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_path(), "-hide_banner", "-loglevel", "error",
+            "-i", src.name,
+            "-ac", "1", "-ar", str(TARGET_RATE), "-c:a", "pcm_s16le", "-map_metadata", "-1",
+            "-f", "wav", "pipe:1",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError as exc:
+            proc.kill()
+            raise AudioError("ffmpeg timed out") from exc
     if proc.returncode != 0 or not out:
         raise AudioError(f"ffmpeg failed: {err.decode(errors='replace')[:300]}")
-    return fix_wav_header(out)
+    wav = fix_wav_header(out)
+    # ffmpeg can exit 0 on a broken file and write a header with no audio.
+    if wav_duration_seconds(wav) < 0.1:
+        raise AudioError(f"no audio decoded: {err.decode(errors='replace')[:300] or 'empty output'}")
+    return wav
 
 
 def fix_wav_header(data: bytes) -> bytes:

@@ -1,6 +1,7 @@
 import io
 import json
 import math
+import subprocess
 import struct
 import wave
 
@@ -13,11 +14,11 @@ from owobook import http as owo_http
 from owobook.agent.handler import handle_voice_note
 from owobook.config import Settings
 from owobook.llm import FakeProvider, get_provider
-from owobook.llm.base import LLMError, LLMResponse
+from owobook.llm.base import LLMError, LLMResponse, ToolCall
 from owobook.llm.openai_compat import FallbackProvider, OpenAICompatProvider
 from owobook.models import UsageLog
 from owobook.transcribe import TranscriptionError
-from owobook.transcribe.audio import is_target_wav, to_wav, wav_duration_seconds
+from owobook.transcribe.audio import AudioError, ffmpeg_path, is_target_wav, to_wav, wav_duration_seconds
 from owobook.transcribe.fake import FakeTranscriber
 from owobook.transcribe.meta import MetaTranscriber
 from owobook.usage import estimate_cost
@@ -142,6 +143,21 @@ async def test_audio_is_converted_to_mono_24k_wav():
     assert wav_duration_seconds(converted) == pytest.approx(0.5, abs=0.05)
 
 
+async def test_m4a_with_index_at_end_is_converted(tmp_path):
+    # iPhone Voice Memos write .m4a with the "moov" index at the END, which ffmpeg can't read from a pipe.
+    (tmp_path / "in.wav").write_bytes(make_wav(seconds=1.0))
+    subprocess.run([ffmpeg_path(), "-loglevel", "error", "-i", str(tmp_path / "in.wav"), "-c:a", "aac",
+                    str(tmp_path / "memo.m4a")], check=True)
+    data = (tmp_path / "memo.m4a").read_bytes()
+    assert data.find(b"moov") > data.find(b"mdat")  # index really is at the end
+    assert wav_duration_seconds(await to_wav(data)) == pytest.approx(1.0, abs=0.1)
+
+
+async def test_undecodable_audio_raises():
+    with pytest.raises(AudioError):
+        await to_wav(b"not audio at all" * 100)
+
+
 async def test_target_wav_is_passed_through():
     wav = make_wav(rate=16_000, channels=1)
     assert await to_wav(wav) is wav
@@ -182,6 +198,16 @@ async def test_voice_note_end_to_end_with_fakes(db):
     # the trader's customer names are used to bias the next transcription
     await handle_voice_note(db, provider, transcriber, "234801", b"fake-audio")
     assert "Mama Bisi" in transcriber.calls[-1]
+
+
+async def test_first_voice_note_with_spelled_out_amount_is_processed(db):
+    transcriber = FakeTranscriber("Mama Bisi collect three bags rice, she go pay forty five thousand naira Friday")
+    replies = await handle_voice_note(db, FakeProvider(script=[
+        LLMResponse(content=None, tool_calls=[ToolCall("c1", "record_sale", {
+            "customer_name": "Mama Bisi", "item_description": "rice", "amount_naira": "forty five thousand naira",
+            "paid": False, "due_date": "Friday"})])
+    ]), transcriber, "234802", b"a")
+    assert "Welcome" in replies[0].text and "₦45,000" in replies[-1].text
 
 
 async def test_voice_note_dedupe(db):

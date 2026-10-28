@@ -125,8 +125,10 @@ async def handle_message(
         elif not trader.onboarded:
             trader.onboarded = True
             replies = [fmt.onboarding_reply(lang)]
-            # If their very first message already looks like a record ("... 45k"), process it too.
-            if text and re.search(r"\d", text) and len(text.split()) >= 3:
+            # Process the very first message too if it's a voice note (a real attempt — amounts are
+            # often spelled out, "sixty thousand") or text that looks like a record ("... 45k").
+            looks_like_record = bool(text and re.search(r"\d", text) and len(text.split()) >= 3)
+            if text and text.strip() and (msg_type == "audio" or looks_like_record):
                 replies += await _run(db, provider, trader, text, msg_type, lang, inbound.id)
         elif not text or not text.strip():
             replies = [Reply(fmt.t(lang, "fallback"))]

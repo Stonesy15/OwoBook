@@ -1,0 +1,65 @@
+# Render Blueprint: one free Docker web service. Database is Supabase Postgres (DATABASE_URL).
+# Values marked `sync: false` are asked for once, when you create the Blueprint in the Render dashboard.
+services:
+  - type: web
+    name: owobook
+    runtime: docker
+    plan: free
+    region: frankfurt # closest Render region to Lagos
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # App
+      - key: APP_ENV
+        value: production # webhook signatures are always checked
+      - key: TIMEZONE
+        value: Africa/Lagos
+      - key: DATABASE_URL
+        sync: false # Supabase → Connect → Session pooler (port 5432)
+      - key: ALLOWED_WA_IDS
+        sync: false # demo allow-list, e.g. 2347086784657 (empty = anyone)
+
+      # Meta Model API (Muse Spark + Muse Voice Transcribe)
+      - key: LLM_PROVIDER
+        value: meta
+      - key: EXTRACTION_PROVIDER
+        value: baseten
+      - key: TRANSCRIBER
+        value: meta
+      - key: MODEL_API_KEY
+        sync: false
+      - key: META_CHAT_MODEL
+        value: muse-spark-1.3
+      - key: META_TRANSCRIBE_MODEL
+        value: muse-voice-transcribe-1.0
+      - key: META_REASONING_EFFORT
+        value: low
+
+      # Baseten (Meta open-weights model, fallback)
+      - key: BASETEN_API_KEY
+        sync: false
+      - key: BASETEN_BASE_URL
+        value: https://inference.baseten.co/v1
+      - key: BASETEN_MODEL
+        value: meta-models/muse-spark-open-1026
+
+      # WhatsApp Cloud API
+      - key: WA_ACCESS_TOKEN
+        sync: false # permanent system-user token
+      - key: WA_PHONE_NUMBER_ID
+        sync: false
+      - key: WA_APP_SECRET
+        sync: false
+      - key: WA_VERIFY_TOKEN
+        generateValue: true # copy it from Render into the Meta webhook settings
+      - key: WA_GRAPH_VERSION
+        value: v26.0
+      - key: WA_REMINDER_TEMPLATE
+        sync: false # optional approved template name
+
+      # Reminders: the free plan sleeps, so an external cron calls POST /tasks/reminders at 08:00.
+      - key: ENABLE_SCHEDULER
+        value: "false"
+      - key: TASK_TOKEN
+        generateValue: true # the cron sends it as header X-Task-Token

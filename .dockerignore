@@ -1,0 +1,13 @@
+.env
+.env.*
+.venv/
+.git/
+**/__pycache__/
+.pytest_cache/
+*.db
+*.db-journal
+media/
+tests/
+evals/
+docs/
+CLAUDE.md

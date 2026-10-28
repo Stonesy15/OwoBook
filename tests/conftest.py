@@ -14,10 +14,15 @@ from owobook import models  # noqa: E402,F401
 from owobook.db import Base, make_engine  # noqa: E402
 
 
+# Set TEST_DATABASE_URL (e.g. a throwaway local Postgres) to run the ledger tests on Postgres too.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite://")
+
+
 @pytest.fixture
 def db() -> Session:
-    """A fresh in-memory database per test."""
-    engine = make_engine("sqlite://")
+    """A fresh, empty database per test (in-memory SQLite unless TEST_DATABASE_URL is set)."""
+    engine = make_engine(TEST_DATABASE_URL)
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         yield session

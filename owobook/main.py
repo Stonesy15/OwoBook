@@ -60,6 +60,8 @@ class Services:
     whatsapp: WhatsAppClient
     # One lock per trader: their messages are handled in order, never two at once.
     locks: dict[str, asyncio.Lock] = field(default_factory=lambda: defaultdict(asyncio.Lock))
+    # Scheduler and external cron can both fire at 08:00; only one reminder run at a time.
+    reminders_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def default_services(settings: Settings) -> Services:
@@ -96,6 +98,8 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
         )
         if not s.wa_app_secret:
             log.warning("WA_APP_SECRET is not set: webhook signatures are NOT checked (development only)")
+        if s.app_env == "production" and s.database_url.startswith("sqlite"):
+            log.error("DATABASE_URL is SQLite in production: the ledger is lost on every redeploy. Use Postgres.")
         scheduler = start_scheduler(app.state.services) if s.enable_scheduler else None
         yield
         if scheduler:
@@ -150,8 +154,12 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
 
 async def reminders_job(services: Services) -> None:
     """The daily reminder run (scheduler, /tasks/reminders). Never raises."""
+    if services.reminders_lock.locked():
+        log.info("reminders already running; skipping this trigger")
+        return
     try:
-        await run_reminders(services.session_factory, services.whatsapp, services.settings)
+        async with services.reminders_lock:
+            await run_reminders(services.session_factory, services.whatsapp, services.settings)
     except Exception:
         log.exception("daily reminders failed")
 

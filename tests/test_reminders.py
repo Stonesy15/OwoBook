@@ -235,3 +235,22 @@ def test_seed_demo_gives_due_overdue_later_and_cleared(db):
     assert not debtors["Chidi"].overdue and debtors["Emeka"].balance_kobo == 40 * K  # part-paid 20k of 60k
     assert "Blessing" not in debtors
     assert ledger.sales_summary(db, trader, "today", WED).cash_sales_kobo == 39 * K
+
+
+async def test_overlapping_triggers_run_reminders_once(factory, monkeypatch):
+    """Scheduler and external cron both firing at 08:00 must not send twice."""
+    import asyncio
+
+    from owobook import main
+    from owobook.main import reminders_job
+
+    async def on_wednesday(*a, **kw):
+        return await reminders.run_reminders(*a, today=WED, now=NOW, **kw)
+
+    monkeypatch.setattr(main, "run_reminders", on_wednesday)
+    make_trader(factory)
+    wa = FakeWhatsApp()
+    services = Services(settings=settings(), session_factory=factory, provider=FakeProvider(),
+                        transcriber=FakeTranscriber(), whatsapp=wa)
+    await asyncio.gather(reminders_job(services), reminders_job(services))
+    assert len(wa.sent) == 3  # one heads-up + two drafts, not six

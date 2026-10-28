@@ -1,10 +1,14 @@
 """Usage and cost tracking — one usage_log row per model call, for 'cost per voice note'."""
 
 import logging
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from owobook.models import UsageLog
+from owobook.models import MessageLog, UsageLog
 
 log = logging.getLogger(__name__)
 
@@ -60,3 +64,61 @@ def log_usage(
     db.add(row)
     db.flush()
     return row
+
+
+@dataclass
+class Turn:
+    """One inbound message and every model call it caused."""
+
+    kind: str  # "voice" | "text"
+    llm_usd: float = 0.0
+    asr_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    audio_seconds: float = 0.0
+    llm_calls: int = 0
+
+    @property
+    def usd(self) -> float:
+        return self.llm_usd + self.asr_usd
+
+
+def turns(db: Session, since: datetime | None = None) -> list[Turn]:
+    """Group usage_log rows by the inbound message that caused them.
+
+    usage_log has no message id, so we replay each trader's events in time order. A voice note logs its
+    transcription first, then the inbound audio message, then the Muse Spark calls; a text message logs
+    the message, then the calls. Messages that made no model call (button taps, onboarding) are left out.
+    """
+    events: dict[int | None, list[tuple[datetime, int, object]]] = defaultdict(list)
+    usage = select(UsageLog).where(UsageLog.provider != "fake")  # simulator/test runs cost nothing
+    inbound = select(MessageLog).where(MessageLog.direction == "in", MessageLog.type.in_(("text", "audio")))
+    if since:
+        usage, inbound = usage.where(UsageLog.created_at >= since), inbound.where(MessageLog.created_at >= since)
+    for u in db.scalars(usage):
+        events[u.trader_id].append((u.created_at, 1, u))
+    for m in db.scalars(inbound):
+        events[m.trader_id].append((m.created_at, 0, m))
+
+    out: list[Turn] = []
+    for rows in events.values():
+        current: Turn | None = None
+        pending_voice = False  # a transcription was seen, its audio message not yet
+        for _, _, ev in sorted(rows, key=lambda r: (r[0], r[1])):
+            if isinstance(ev, MessageLog):
+                if ev.type == "audio" and pending_voice:
+                    pending_voice = False  # same voice note as the transcription just before it
+                    continue
+                current = Turn("voice" if ev.type == "audio" else "text")
+                out.append(current)
+            elif ev.audio_seconds:
+                current, pending_voice = Turn("voice"), True
+                out.append(current)
+                current.asr_usd += ev.est_cost_usd
+                current.audio_seconds += ev.audio_seconds
+            elif current is not None:
+                current.llm_usd += ev.est_cost_usd
+                current.input_tokens += ev.input_tokens
+                current.output_tokens += ev.output_tokens
+                current.llm_calls += 1
+    return [t for t in out if t.usd > 0 or t.llm_calls]

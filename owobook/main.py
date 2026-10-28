@@ -38,6 +38,17 @@ from owobook.whatsapp.webhook import InboundMessage, parse_webhook, verify_signa
 log = logging.getLogger("owobook")
 
 
+class _HideQueryString(logging.Filter):
+    """Uvicorn's access log prints full URLs, and Meta's verify call puts the verify token in the query."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            path = record.args[2]
+            if "?" in path:
+                record.args = (*record.args[:2], path.split("?", 1)[0] + "?…", *record.args[3:])
+        return True
+
+
 @dataclass
 class Services:
     """Everything the webhook needs. Tests swap in fakes."""
@@ -75,6 +86,7 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True)
         for noisy in ("alembic", "httpx", "httpcore"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").addFilter(_HideQueryString())
         app.state.services = services or default_services(settings)
         s = app.state.services.settings
         log.info(

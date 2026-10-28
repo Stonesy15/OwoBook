@@ -62,8 +62,10 @@ class Settings(BaseSettings):
 
     @property
     def allowed_wa_id_set(self) -> set[str]:
-        """Parsed allow-list. Empty set means everyone is allowed."""
-        return {x.strip() for x in self.allowed_wa_ids.split(",") if x.strip()}
+        """Parsed allow-list, digits only ("+234 801-234" -> "234801234", like WhatsApp's wa_id).
+        Empty set means everyone is allowed."""
+        ids = ("".join(c for c in x if c.isdigit()) for x in self.allowed_wa_ids.split(","))
+        return {x for x in ids if x}
 
 
 @lru_cache

@@ -241,6 +241,15 @@ def test_allow_list_blocks_other_numbers(app_env):
     assert wa.sent == []
 
 
+def test_allow_list_accepts_plus_and_spaces(app_env):
+    """WhatsApp's wa_id has no '+', but people paste numbers the way they write them."""
+    client, wa, services = app_env
+    services.settings = settings(allowed_wa_ids="+234 801-111-2222 , +2348000000000")
+    assert services.settings.allowed_wa_id_set == {TRADER, "2348000000000"}
+    post(client, envelope(text_msg("hello")))
+    assert wa.sent and wa.sent[0][0] == TRADER
+
+
 def test_invalid_json_still_gets_200(app_env):
     client, _, _ = app_env
     raw = b"not json"
@@ -311,3 +320,14 @@ async def test_client_retries_5xx_and_reports_4xx():
     with pytest.raises(WhatsAppError, match="131030"):
         await wa.send_text(TRADER, "hi")
     await wa.aclose()
+
+
+def test_access_log_hides_verify_token():
+    import logging
+
+    from owobook.main import _HideQueryString
+
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                               ("1.2.3.4:0", "GET", "/webhook?hub.verify_token=secret&hub.challenge=1", "1.1", 200), None)
+    _HideQueryString().filter(record)
+    assert "secret" not in record.getMessage() and "/webhook?…" in record.getMessage()

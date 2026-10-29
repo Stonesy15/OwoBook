@@ -47,17 +47,6 @@ def already_seen(db: Session, wa_message_id: str | None) -> bool:
     ) is not None
 
 
-def trader_language(db: Session, trader: Trader) -> Lang:
-    """Language for replies that have no text to mirror (button taps): use the last thing they wrote."""
-    last_text = db.scalar(
-        select(MessageLog.content)
-        .where(MessageLog.trader_id == trader.id, MessageLog.direction == "in", MessageLog.type.in_(["text", "audio"]))
-        .order_by(MessageLog.id.desc())
-        .limit(1)
-    )
-    return fmt.detect_language(last_text or "", trader.language_pref)
-
-
 def handle_button(db: Session, trader: Trader, button_id: str, lang: Lang) -> list[Reply]:
     if "remind" in button_id.lower():  # quick reply on the reminder template ("Show reminders")
         from owobook import reminders
@@ -104,13 +93,12 @@ async def handle_message(
     msg_type: str = "text",
     wa_message_id: str | None = None,
     now: datetime | None = None,
-    lang: Lang | None = None,
 ) -> list[Reply]:
     """Process one inbound message and return the replies to send.
 
     `text` is the typed text, the voice-note transcript or what was read from a photo. `msg_type` is
-    'text', 'audio', 'image' or 'button'. `lang` overrides language detection (photos are read in
-    English). Commits nothing — the caller owns the transaction.
+    'text', 'audio', 'image' or 'button'. Replies are in the trader's chosen language (default
+    English), not mirrored from the message. Commits nothing — the caller owns the transaction.
     """
     if already_seen(db, wa_message_id):
         log.info("duplicate message %s ignored", wa_message_id)
@@ -126,7 +114,7 @@ async def handle_message(
         log.info("duplicate message %s ignored (race)", wa_message_id)
         return []
 
-    lang = lang or (fmt.detect_language(text, trader.language_pref) if text else trader_language(db, trader))
+    lang = fmt.reply_language(trader.language_pref)
     try:
         if button_id:
             replies = handle_button(db, trader, button_id, lang)
@@ -166,7 +154,7 @@ async def handle_voice_note(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
-    lang = trader_language(db, trader)
+    lang = fmt.reply_language(trader.language_pref)
     keywords = [c.display_name for c in ledger.list_customers(db, trader)][:60]
     keywords += [x for x in (trader.name, trader.shop_name) if x]
     try:
@@ -205,8 +193,7 @@ async def handle_photo(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
-    lang = fmt.detect_language(caption, trader.language_pref) if caption and caption.strip() \
-        else trader_language(db, trader)
+    lang = fmt.reply_language(trader.language_pref)
     try:
         reading = await read_photo(provider, image, mime_type, caption=caption,
                                    trader_name=trader.name, shop_name=trader.shop_name)
@@ -228,7 +215,7 @@ async def handle_photo(
         return [reply]
 
     replies = await handle_message(db, provider, wa_id, text=f"{PHOTO_MARKER}\n{reading.text}", msg_type="image",
-                                   wa_message_id=wa_message_id, now=now, lang=lang)
+                                   wa_message_id=wa_message_id, now=now)
     if replies:
         read = "\n".join(f"• {line}" for line in reading.lines)
         replies[0] = Reply(f"🧾 {fmt.t(lang, 'photo_read')}\n{read}\n\n{replies[0].text}", replies[0].buttons,
@@ -244,7 +231,7 @@ async def handle_unsupported(
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
     trader.last_inbound_at = now or utcnow()
-    lang = trader_language(db, trader)
+    lang = fmt.reply_language(trader.language_pref)
     try:
         with db.begin_nested():
             _log_message(db, trader, "in", msg_type, f"[{msg_type}]", wa_message_id)

@@ -28,7 +28,9 @@ class Language(StrEnum):
     PIDGIN = "pidgin"
     ENGLISH = "english"
     YORUBA = "yoruba"
-    AUTO = "auto"
+    HAUSA = "hausa"
+    IGBO = "igbo"
+    AUTO = "auto"  # = English (the default reply language)
 
 
 class EntryType(StrEnum):

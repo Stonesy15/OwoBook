@@ -124,11 +124,12 @@ class AskClarification(ToolArgs):
 
 
 class SaveProfile(ToolArgs):
-    """Save the trader's own name / shop name / preferred language when they tell you."""
+    """Save the trader's own name / shop name when they tell you, or the language OwoBook should reply in
+    when they ask for one ("reply me in Yoruba", "speak Hausa", "English please")."""
 
     name: str | None = None
     shop_name: str | None = None
-    language_pref: Literal["pidgin", "english", "yoruba", "auto"] | None = None
+    language_pref: Literal["english", "pidgin", "yoruba", "hausa", "igbo"] | None = None
 
 
 class SaveCustomerPhone(ToolArgs):
@@ -462,11 +463,16 @@ def _save_profile(ctx: AgentContext, a: SaveProfile) -> ToolResult:
         tr.shop_name = a.shop_name.strip()
     if a.language_pref:
         tr.language_pref = a.language_pref
+        ctx.lang = fmt.reply_language(a.language_pref)  # this reply and the rest of the turn use it
     ctx.db.flush()
-    text = fmt.t(ctx.lang, "profile_saved", name=tr.name or tr.shop_name or "")
-    if tr.shop_name and tr.name:
-        text = text.replace("!", f" of {tr.shop_name}!", 1)
-    return ToolResult(data={"ok": True, "name": tr.name, "shop_name": tr.shop_name}, reply=Reply(text))
+    lines = []
+    if a.name or a.shop_name:
+        who = f"{tr.name} ({tr.shop_name})" if tr.name and tr.shop_name else tr.name or tr.shop_name
+        lines.append(fmt.t(ctx.lang, "profile_saved", name=who))
+    if a.language_pref:
+        lines.append(fmt.t(ctx.lang, "language_saved"))
+    data = {"ok": True, "name": tr.name, "shop_name": tr.shop_name, "reply_language": ctx.lang}
+    return ToolResult(data=data, reply=Reply("\n\n".join(lines)) if lines else None)
 
 
 def _save_customer_phone(ctx: AgentContext, a: SaveCustomerPhone) -> ToolResult:

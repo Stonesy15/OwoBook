@@ -30,11 +30,12 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | "Who owe me money?" | Lists debtors by amount, with overdue ⚠️ flags and a total |
 | "How much I sell this week?" | Cash sales, credit sales, money collected and expenses |
 | *(no amount, or an unclear name)* | Asks **one** short question instead of guessing |
+| "Reply me in Yoruba" | Every reply from then on is in Yorùbá: receipts, lists, reminders and questions. Also Hausa, Igbo, Pidgin and English |
 | 📷 *a photo of a receipt, or a page of the old paper debt book* | Reads it with Muse Spark vision and records every line: one receipt per customer, and a question for any amount it can't read |
 | "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
 | 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
 
-It replies in Pidgin to Pidgin and in English to English. It never messages the trader's customers itself: reminders always go out from the trader's own WhatsApp, which keeps them within WhatsApp's rules and looks trustworthy to the customer.
+It replies in English by default, whatever the trader speaks. Say "reply me in Pidgin" (or Yorùbá, Hausa, Igbo) to switch. Receipts, lists, reminders and the customer drafts then come in that language. Voice notes work in English and Pidgin; Yorùbá, Hausa and Igbo work as text, since Muse Voice Transcribe doesn't list them yet. It never messages the trader's customers itself: reminders always go out from the trader's own WhatsApp, which keeps them within WhatsApp's rules and looks trustworthy to the customer.
 
 ---
 
@@ -228,7 +229,8 @@ owobook/
   llm/                 Meta Model API, Baseten and fake providers (OpenAI-compatible tool calling)
   transcribe/          Muse Voice Transcribe client, ffmpeg → WAV
   vision.py            receipt / debt-book photos → lines, with Muse Spark vision
-  whatsapp/            Cloud API client, webhook parsing + signature check, receipt formatting
+  whatsapp/            Cloud API client, webhook parsing + signature check, receipt formatting,
+                       i18n.py: every fixed text in English, Pidgin, Yorùbá, Hausa and Igbo
   ledger.py            business logic: sales, payments, balances, summaries
   money.py, dates.py   "45k" / "fifteen thousand naira" parsing, Lagos dates ("next tomorrow")
   reminders.py         daily reminders, 24-hour window, templates
@@ -236,7 +238,7 @@ owobook/
   prompts/             the Muse Spark system prompt and the photo-reading prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
 evals/                 42 labelled Pidgin/English cases + runner
-tests/                 237 tests (money, dates, ledger, agent, photos, webhook, reminders, usage)
+tests/                 247 tests (money, dates, ledger, agent, photos, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

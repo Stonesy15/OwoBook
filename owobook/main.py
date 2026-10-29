@@ -217,8 +217,7 @@ async def process_inbound(services: Services, msg: InboundMessage) -> None:
                 db.commit()  # save the ledger before replying, so a failed send never loses a record
         except Exception:
             log.exception("failed to process %s from %s", msg.message_id, msg.wa_id)
-            replies = [Reply(fmt.t("pidgin" if msg.text and fmt.detect_language(msg.text) == "pidgin" else "english",
-                                   "error"))]
+            replies = [Reply(fmt.t("english", "error"))]
 
         for reply in replies:
             try:

@@ -100,6 +100,23 @@ def test_customer_draft_text(factory):
     assert "Alhaji Musa" in pg and "₦250,000 for 10 bags cement" in pg and "don pass since Sun, 25 Oct" in pg
 
 
+@pytest.mark.parametrize("lang, greeting, closing", [
+    ("yoruba", "Ẹ káàárọ̀ Mama Bisi", "A dúpẹ́"),
+    ("hausa", "Barka da safiya Mama Bisi", "Mun gode"),
+    ("igbo", "Ụtụtụ ọma Mama Bisi", "Daalụ"),
+])
+def test_customer_draft_in_nigerian_languages(factory, lang, greeting, closing):
+    make_trader(factory)
+    with factory() as db:
+        trader, _ = ledger.get_or_create_trader(db, WA)
+        due = reminders.debtors_due(db, trader, WED)
+        draft = reminders.customer_draft(db, trader, due[0], lang, WED)
+        replies = reminders.reminder_replies(db, trader, due, lang, WED)
+    assert draft.startswith(greeting) and closing in draft
+    assert "₦35,000" in draft and "Hosea Provisions" in draft  # numbers and names untouched
+    assert "₦285,000" in replies[0].text and "Good morning" not in replies[1].text
+
+
 # ---------- sending & the 24-hour window ---------------------------------------------------
 
 

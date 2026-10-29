@@ -140,3 +140,12 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - The vision call is logged in `usage_log` with provider `<provider>:vision`, so `usage.turns()` counts photos as their own kind.
 - With `LLM_PROVIDER=meta` and Baseten configured, a failed vision call falls back to Muse Spark Open on Baseten. It's untested whether that model accepts images; if not, the trader gets "please try again".
 - Tested live on 29 Oct with generated images: a printed receipt → one part-paid sale (₦54,000, ₦20,000 paid, due Friday); a handwritten debt-book page → 2 sales, 1 payment, and a question about the `???` amount. Cost ≈ $0.011 and ≈ $0.026.
+
+## Reply languages (29 Oct 2026)
+- Hosea's call: replies are in the trader's **chosen** language, default English, no longer mirrored from the message (a Pidgin voice note gets English). `traders.language_pref` already existed; `auto` (the old default) now means English, so no migration.
+- Choices: english, pidgin, yoruba, hausa, igbo. The trader switches by asking ("reply me in Yoruba"), which calls `save_profile(language_pref=...)`. The confirmation is sent in the new language.
+- All fixed texts (receipts, lists, summaries, onboarding, reminders, customer drafts) are in `owobook/whatsapp/i18n.py`, 65 keys × 5 languages. A test checks every language has every key with the same `{placeholders}`. Muse Spark writes its own questions in REPLY_LANGUAGE from the context.
+- The Yorùbá, Hausa and Igbo texts are my translations and need a native speaker's check before launch. Dates stay as "Fri, 30 Oct" in every language.
+- **Voice notes in Yorùbá, Hausa or Igbo aren't supported:** Muse Voice Transcribe (dev.meta.ai/docs/speech-to-text, checked 29 Oct) lists 25 languages, none of them Nigerian. Pidgin works because it's English-based. The language-switch confirmation and onboarding say to speak English or Pidgin in voice notes. Text in those languages works: Muse Spark understood Yorùbá and Hausa sales and payments in a live test.
+- Date words are only parsed in English/Pidgin, so the system prompt tells the model to translate "ọ̀la", "gobe", "echi" etc. first. Before that, "lola" cost one extra model call.
+

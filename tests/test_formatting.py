@@ -1,12 +1,26 @@
-from owobook.whatsapp.formatting import detect_language, parse_button_id, render_plain, Reply, entry_buttons
+from owobook.whatsapp.formatting import parse_button_id, render_plain, reply_language, Reply, entry_buttons
+from owobook.whatsapp.i18n import LANGUAGES, STRINGS
 
 
-def test_detect_language():
-    assert detect_language("Mama Bisi don pay 20k") == "pidgin"
-    assert detect_language("Who dey owe me?") == "pidgin"
-    assert detect_language("no, na 4 bags") == "pidgin"
-    assert detect_language("Mama Bisi paid 20k") == "english"
-    assert detect_language("Mama Bisi don pay 20k", preference="english") == "english"
+def test_reply_language_is_the_choice_not_the_message():
+    assert reply_language(None) == "english"
+    assert reply_language("auto") == "english"  # old default: no more mirroring Pidgin
+    assert reply_language("pidgin") == "pidgin"
+    assert reply_language("igbo") == "igbo"
+    assert reply_language("klingon") == "english"
+
+
+def test_every_language_has_every_text_with_the_same_placeholders():
+    import string
+
+    def fields(text):
+        return {f for _, f, _, _ in string.Formatter().parse(text) if f}
+
+    english = STRINGS["english"]
+    for lang in LANGUAGES:
+        assert set(STRINGS[lang]) == set(english), lang
+        for key, text in english.items():
+            assert fields(STRINGS[lang][key]) == fields(text), (lang, key)
 
 
 def test_button_ids_round_trip():

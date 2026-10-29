@@ -77,7 +77,8 @@ Mama Bisi now owes you ₦45,000 in total.
 - First message from a new number → short friendly onboarding: what OwoBook does + an example voice note to try. Ask for the trader's name/shop name once.
 
 ### Tone
-Friendly, short, respectful. Mirror the trader's language: reply in Pidgin if they speak Pidgin, English if English. Never lecture. Never use long paragraphs.
+Friendly, short, respectful. Never lecture. Never use long paragraphs.
+**Reply language (changed 29 Oct 2026, Hosea's decision):** OwoBook replies in the trader's *chosen* language, default **English** — a Pidgin voice note gets an English reply. The trader can switch with "reply me in Pidgin / Yoruba / Hausa / Igbo" (`save_profile.language_pref`). Fixed texts live in `owobook/whatsapp/i18n.py`. Voice notes must be English/Pidgin (Muse Voice Transcribe doesn't list Yorùbá, Hausa or Igbo); text works in all five.
 
 ### Debt reminders
 - A scheduled job runs daily at **08:00 Africa/Lagos**.

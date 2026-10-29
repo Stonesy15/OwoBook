@@ -152,6 +152,10 @@ class FakeProvider:
                 return self._call("ask_clarification", question="Na whose number be this?")
             return self._call("save_customer_phone", customer_name=name, phone=phone_m[1].strip())
 
+        # Reply language: "reply me in Yoruba", "speak Hausa", "change language to Igbo"
+        if lang_m := re.search(r"\b(?:reply|answer|talk|speak|yarn|respond|language)\b.*?\b(english|pidgin|yoruba|yorùbá|hausa|igbo)\b", low):
+            return self._call("save_profile", language_pref=lang_m[1].replace("yorùbá", "yoruba"))
+
         # Profile: "my name is Hosea, my shop is Hosea Provisions"
         name_m = re.search(r"\b(?:my name is|my name na|i be|i am|i'm|call me)\s+([a-z][a-z .']*?)(?=[,.]|\s+and\b|\s+my\b|$)", low)
         shop_m = re.search(r"\b(?:my shop(?: name)? (?:is|na)|shop name (?:is|na)|i get shop wey dem dey call)\s+([^,.]+)", text, re.I)

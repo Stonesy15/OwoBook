@@ -2,6 +2,7 @@ import base64
 
 from sqlalchemy import func, select
 
+from owobook import ledger
 from owobook.agent.handler import handle_photo
 from owobook.llm.base import LLMError, LLMResponse, ToolCall
 from owobook.llm.fake import FakeProvider
@@ -94,8 +95,10 @@ async def test_goods_photo_with_caption_uses_the_caption(db):
     assert db.scalar(select(Entry.source)) == "image"
 
 
-async def test_pidgin_caption_gets_pidgin_reply(db):
+async def test_photo_reply_is_in_the_chosen_language(db):
     await onboard(db)
+    trader, _ = ledger.get_or_create_trader(db, WA)
+    trader.language_pref = "pidgin"
     provider = FakeProvider(script=[
         reading("Iya Tope took 2 tins of oil for 9000"),
         calls(("record_sale", {"customer_name": "Iya Tope", "amount_naira": 9000, "paid": False})),

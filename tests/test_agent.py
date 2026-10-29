@@ -277,3 +277,43 @@ async def test_bad_phone_number_asks_again(db):
         LLMResponse(content="That number no complete. Abeg send am again?"),
     ]))
     assert "no complete" in replies[-1].text
+
+
+# ---------- reply language --------------------------------------------------------------------
+
+
+async def test_pidgin_message_gets_an_english_reply_by_default(db):
+    await onboard(db)
+    replies = await say(db, "Mama Bisi collect 3 bags rice, she go pay 45k Friday", msg_type="audio")
+    assert replies[0].text.startswith("✅ Recorded")
+    assert "Mama Bisi now owes you ₦45,000" in replies[0].text
+
+
+@pytest.mark.parametrize("ask, lang, saved, recorded, title", [
+    ("reply me in Yoruba", "yoruba", "Màá máa fèsì ní Yorùbá", "✅ Mo ti kọ ọ́ sílẹ̀", "📒 Àwọn tó jẹ ọ́ lówó (1)"),
+    ("abeg speak Hausa", "hausa", "Zan riƙa ba ka amsa da Hausa", "✅ An rubuta", "📒 Waɗanda kake bi bashi (1)"),
+    ("change language to Igbo", "igbo", "M ga na-aza gị n'Igbo", "✅ Edebanyela m ya", "📒 Ndị ji gị ụgwọ (1)"),
+    ("reply me for pidgin", "pidgin", "I go dey reply you for Pidgin", "✅ I don write am", "📒 People wey dey owe you (1)"),
+])
+async def test_trader_can_switch_reply_language(db, ask, lang, saved, recorded, title):
+    await onboard(db)
+    replies = await say(db, ask)
+    assert saved in replies[0].text
+    assert ledger.get_or_create_trader(db, WA)[0].language_pref == lang
+
+    receipt = (await say(db, "Mama Bisi collect 3 bags rice, she go pay 45k Friday"))[0].text
+    assert receipt.startswith(recorded) and "₦45,000" in receipt and "Mama Bisi" in receipt
+    assert (await say(db, "Who owe me money?"))[0].text.startswith(title)
+
+    back = await say(db, "reply in English")
+    assert "I'll reply in English" in back[0].text
+
+
+async def test_chosen_language_reaches_the_model(db):
+    await onboard(db)
+    trader, _ = ledger.get_or_create_trader(db, WA)
+    trader.language_pref = "igbo"
+    provider = FakeProvider()
+    await say(db, "Who owe me money?", provider=provider)
+    context = provider.calls[0][1]["content"]
+    assert "REPLY_LANGUAGE: igbo" in context

@@ -54,38 +54,27 @@ def customer_draft(db: Session, trader: Trader, debtor: Debtor, lang: Lang, toda
     items = _items_for(db, trader, debtor)
     seller = trader.shop_name or trader.name
     when = format_date(debtor.next_due, today) if debtor.next_due else None
-    if lang == "pidgin":
-        who = f"Na {seller} dey remind you" if seller else "I just dey remind you"
-        what = f"your balance of {amount}" + (f" for {items}" if items else "")
-        status = "don due today" if debtor.due_today or not when else f"don pass since {when}"
-        return (f"Good morning {name} 🙏\n\n{who} say {what} {status}.\n\n"
-                "Abeg pay when you fit. Thank you for your patronage! 🙏")
-    who = f"This is a friendly reminder from {seller}" if seller else "This is a friendly reminder"
-    what = f"your balance of {amount}" + (f" for {items}" if items else "")
-    status = "is due today" if debtor.due_today or not when else f"was due on {when}"
-    return (f"Good morning {name} 🙏\n\n{who} that {what} {status}.\n\n"
-            "Please pay when you can. Thank you for your patronage! 🙏")
+    who = fmt.t(lang, "r_from_seller", seller=seller) if seller else fmt.t(lang, "r_from")
+    items_text = fmt.t(lang, "r_items", items=items) if items else ""
+    if debtor.due_today or not when:
+        body = fmt.t(lang, "r_body_today", who=who, amount=amount, items=items_text)
+    else:
+        body = fmt.t(lang, "r_body_past", who=who, amount=amount, items=items_text, date=when)
+    return f"{fmt.t(lang, 'r_greeting', name=name)}\n\n{body}\n\n{fmt.t(lang, 'r_close')}"
 
 
 def _heads_up(debtors: list[Debtor], lang: Lang, today: date) -> str:
     if len(debtors) == 1:
         d = debtors[0]
         name, amount = d.customer.display_name, format_naira(d.balance_kobo)
-        if lang == "pidgin":
-            status = "don due today" if d.due_today else f"don pass since {format_date(d.next_due, today)}"
-            return f"⏰ {name} {amount} {status}. See message wey you fit forward give am 👇"
-        status = "is due today" if d.due_today else f"has been overdue since {format_date(d.next_due, today)}"
-        return f"⏰ {name}'s {amount} {status}. Here's a reminder you can forward 👇"
+        if d.due_today:
+            return fmt.t(lang, "r_one_today", name=name, amount=amount)
+        return fmt.t(lang, "r_one_overdue", name=name, amount=amount, date=format_date(d.next_due, today))
 
     total = format_naira(sum(d.balance_kobo for d in debtors))
-    lines = [
-        f"⏰ {len(debtors)} people get debt wey don due — {total} total. Messages wey you fit forward dey below 👇"
-        if lang == "pidgin" else
-        f"⏰ {len(debtors)} customers have debts due or overdue — {total} in total. Reminders you can forward are below 👇",
-        "",
-    ]
+    lines = [fmt.t(lang, "r_many", count=len(debtors), total=total), ""]
     for d in debtors:
-        tag = "today" if d.due_today else f"⚠️ since {format_date(d.next_due, today)}"
+        tag = fmt.t(lang, "r_tag_today") if d.due_today else fmt.t(lang, "r_tag_since", date=format_date(d.next_due, today))
         lines.append(f"• {d.customer.display_name} — {format_naira(d.balance_kobo)} · {tag}")
     return "\n".join(lines)
 
@@ -106,10 +95,7 @@ def reminder_replies(db: Session, trader: Trader, debtors: list[Debtor], lang: L
         replies.append(Reply(draft, link=fmt.send_to_link(d.customer.display_name, phone, draft) if phone else None))
     if len(debtors) > MAX_DRAFTS:
         more = len(debtors) - MAX_DRAFTS
-        replies.append(Reply(
-            f"…and {more} more. Talk \"who owe me\" to see everybody." if lang == "pidgin"
-            else f"…and {more} more. Say \"who owes me\" to see everyone."
-        ))
+        replies.append(Reply(fmt.t(lang, "r_more", more=more)))
     return replies
 
 
@@ -170,7 +156,6 @@ async def run_reminders(
 ) -> list[ReminderResult]:
     """Send today's reminders. `dry_run` builds the messages without sending or logging;
     `force` ignores the once-a-day check (for testing)."""
-    from owobook.agent.handler import trader_language  # avoid an import cycle
 
     today = today or today_local()
     now = now or utcnow()
@@ -192,7 +177,7 @@ async def run_reminders(
                 if not force and not dry_run and already_reminded(db, trader, today):
                     results.append(ReminderResult(wa_id, "already_sent", len(debtors)))
                     continue
-                lang = trader_language(db, trader)
+                lang = fmt.reply_language(trader.language_pref)
                 replies = reminder_replies(db, trader, debtors, lang, today)
 
                 if dry_run:

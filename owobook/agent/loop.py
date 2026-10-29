@@ -61,7 +61,7 @@ def recent_history(db: Session, trader: Trader, before_id: int | None) -> list[d
         .where(
             MessageLog.trader_id == trader.id,
             MessageLog.created_at >= utcnow() - HISTORY_WINDOW,
-            MessageLog.type.in_(["text", "audio"]),
+            MessageLog.type.in_(["text", "audio", "image"]),
         )
         .order_by(MessageLog.id.desc())
         .limit(HISTORY_MESSAGES)

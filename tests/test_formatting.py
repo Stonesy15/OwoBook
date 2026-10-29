@@ -28,3 +28,5 @@ def test_item_line_drops_a_unit_that_repeats_the_item():
     assert item_line(Entry(quantity=3, unit="charger", item_description="charger")) == "3 charger"
     assert item_line(Entry(quantity=2, unit="crates", item_description="crate")) == "2 crate"
     assert item_line(Entry(quantity=3, unit="bags", item_description="rice")) == "3 bags rice"
+    assert item_line(Entry(quantity=3, unit="ctn", item_description="indomie 3 ctn")) == "indomie 3 ctn"
+    assert item_line(Entry(quantity=3, unit="bags", item_description="rice 13 kg")) == "3 bags rice 13 kg"

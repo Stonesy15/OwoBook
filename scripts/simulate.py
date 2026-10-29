@@ -7,7 +7,8 @@
     uv run python scripts/simulate.py --wa-id 2348011112222 # pretend to be another trader
 
 Type a message and press Enter. To send a voice note, type (or drag in) the path to an
-audio file (.ogg .opus .m4a .mp3 .wav). When a reply has buttons, type 1, 2 or 3 to tap one.
+audio file (.ogg .opus .m4a .mp3 .wav); for a receipt photo, the path to a .jpg/.png, optionally
+followed by a caption. When a reply has buttons, type 1, 2 or 3 to tap one.
 After each turn the simulator prints the model/transcription cost of that message.
 Commands: /reminders (show this morning's debt reminders), /help, /quit
 """
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import func, select  # noqa: E402
 
-from owobook.agent.handler import handle_message, handle_voice_note  # noqa: E402
+from owobook.agent.handler import handle_message, handle_photo, handle_voice_note  # noqa: E402
 from owobook.config import get_settings  # noqa: E402
 from owobook.db import SessionLocal, migrate, session_scope  # noqa: E402
 from owobook.llm import LLMError, get_provider  # noqa: E402
@@ -34,6 +35,7 @@ from owobook.whatsapp.formatting import render_plain  # noqa: E402
 
 GREEN, DIM, BOLD, RED, RESET = "\033[32m", "\033[2m", "\033[1m", "\033[31m", "\033[0m"
 AUDIO_EXTS = {".ogg", ".opus", ".oga", ".m4a", ".mp3", ".wav", ".aac", ".amr", ".webm"}
+IMAGE_EXTS = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 HELP = f"""{DIM}Try:
   Mama Bisi collect 3 bags rice, she go pay 45k Friday
@@ -44,6 +46,7 @@ HELP = f"""{DIM}Try:
   How much I sell this week?
   How much Mama Bisi owe?
   ~/Downloads/voice-note.ogg      ← a path to an audio file sends it as a voice note
+  ~/Downloads/receipt.jpg Tunde   ← a path to a photo sends it (any words after it are the caption)
 Type 1/2/3 to tap a button. /reminders shows the 08:00 debt reminders. /quit to exit.{RESET}"""
 
 
@@ -57,6 +60,20 @@ def audio_path(line: str) -> Path | None:
         return None
     path = Path(parts[0]).expanduser()
     return path if path.suffix.lower() in AUDIO_EXTS and path.is_file() else None
+
+
+def photo_path(line: str) -> tuple[Path, str | None] | None:
+    """A photo path, optionally followed by a caption: `receipt.jpg Mama Bisi never pay`."""
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    path = Path(parts[0]).expanduser()
+    if path.suffix.lower() not in IMAGE_EXTS or not path.is_file():
+        return None
+    return path, " ".join(parts[1:]) or None
 
 
 async def main() -> None:
@@ -123,6 +140,11 @@ async def main() -> None:
                         transcriber = get_transcriber(transcriber_name)
                     print(f"{DIM}  (sending voice note {path.name}, {path.stat().st_size // 1024} KB){RESET}")
                     replies = await handle_voice_note(db, provider, transcriber, args.wa_id, path.read_bytes())
+                elif photo := photo_path(line):
+                    path, caption = photo
+                    print(f"{DIM}  (sending photo {path.name}, {path.stat().st_size // 1024} KB){RESET}")
+                    replies = await handle_photo(db, provider, args.wa_id, path.read_bytes(),
+                                                 IMAGE_EXTS[path.suffix.lower()], caption=caption)
                 else:
                     replies = await handle_message(db, provider, args.wa_id, text=line, msg_type="text")
         except (LLMError, TranscriptionError) as exc:
@@ -137,7 +159,7 @@ async def main() -> None:
 
         with session_scope() as db:
             rows = db.scalars(select(UsageLog).where(UsageLog.id > usage_before)).all()
-        if rows and any(r.provider != "fake" for r in rows):
+        if rows and any(not r.provider.startswith("fake") for r in rows):
             cost = sum(r.est_cost_usd for r in rows)
             toks = sum(r.input_tokens + r.output_tokens for r in rows)
             audio = sum(r.audio_seconds for r in rows)

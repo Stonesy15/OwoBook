@@ -14,6 +14,7 @@ from typing import Any
 
 from owobook.llm.base import LLMResponse, ToolCall, Usage
 from owobook.money import parse_amount
+from owobook.vision import PHOTO_MARKER
 
 _UNITS = (
     r"bags?|crates?|cartons?|tins?|pieces?|pcs|kg|kilos?|tubers?|baskets?|bottles?|packs?|"
@@ -100,6 +101,10 @@ class FakeProvider:
 
     def _respond(self, messages: list[dict[str, Any]]) -> LLMResponse:
         last = messages[-1]
+        if isinstance(last.get("content"), list):  # a photo: no eyes, so echo the caption's line (if any)
+            note = next((p["text"] for p in last["content"] if p.get("type") == "text"), "")
+            caption = re.search(r'caption: "(.*)"', note, re.S)
+            return LLMResponse(content=caption[1] if caption else "NOT_A_RECEIPT")
         if last["role"] == "tool":
             # After a tool error, relay the tool's suggested question; otherwise nothing to add.
             try:
@@ -113,7 +118,7 @@ class FakeProvider:
         if m := re.search(r"^KNOWN_CUSTOMERS: (.*)$", context, re.M):
             known = [n.strip() for n in m[1].split("|") if n.strip()]
         editing = re.search(r"^EDITING_ENTRY_ID: (\d+)$", context, re.M)
-        text = last["content"].strip()
+        text = last["content"].removeprefix(PHOTO_MARKER).strip()  # photo lines: handled like text
         low = text.lower()
 
         amounts = [(mm.start(), mm.end(), mm.group(0)) for mm in _AMOUNT_RE.finditer(text) if parse_amount(mm.group(0))]

@@ -1,4 +1,4 @@
-"""Cost per voice note and per text message, from usage_log (real model calls only).
+"""Cost per voice note, photo and text message, from usage_log (real model calls only).
 
     uv run python scripts/cost_report.py
     uv run python scripts/cost_report.py --days 7 --usd-ngn 1550     # last week, also in naira
@@ -34,12 +34,14 @@ def main() -> None:
         all_turns = turns(db, since)
     voice = [t for t in all_turns if t.kind == "voice"]
     text = [t for t in all_turns if t.kind == "text"]
+    photo = [t for t in all_turns if t.kind == "photo"]
     rate = args.usd_ngn
 
     if not all_turns:
         print("No real model calls logged yet. Send OwoBook a voice note or text first.")
         return
-    print(f"Messages that used the models: {len(voice)} voice notes, {len(text)} text messages\n")
+    print(f"Messages that used the models: {len(voice)} voice notes, {len(photo)} photos, "
+          f"{len(text)} text messages\n")
     if voice:
         avg = mean(t.usd for t in voice)
         print("Per voice note (average):")
@@ -49,6 +51,10 @@ def main() -> None:
               f"  · {mean(t.llm_calls for t in voice):.1f} calls, {mean(t.input_tokens for t in voice):,.0f} in"
               f" / {mean(t.output_tokens for t in voice):,.0f} out tokens")
         print(f"  Total                  {money(avg, rate)}   → 1,000 voice notes ≈ {money(avg * 1000, rate)}\n")
+    if photo:
+        avg = mean(t.usd for t in photo)
+        print(f"Per photo (average): {money(avg, rate)}  · {mean(t.llm_calls for t in photo):.1f} Muse Spark calls,"
+              f" {mean(t.input_tokens for t in photo):,.0f} in / {mean(t.output_tokens for t in photo):,.0f} out tokens\n")
     if text:
         avg = mean(t.usd for t in text)
         print(f"Per text message (average): {money(avg, rate)}"

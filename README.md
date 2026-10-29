@@ -30,6 +30,7 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | "Who owe me money?" | Lists debtors by amount, with overdue ⚠️ flags and a total |
 | "How much I sell this week?" | Cash sales, credit sales, money collected and expenses |
 | *(no amount, or an unclear name)* | Asks **one** short question instead of guessing |
+| 📷 *a photo of a receipt, or a page of the old paper debt book* | Reads it with Muse Spark vision and records every line: one receipt per customer, and a question for any amount it can't read |
 | "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
 | 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
 
@@ -42,6 +43,7 @@ It replies in Pidgin to Pidgin and in English to English. It never messages the 
 | Component | Role in OwoBook |
 |---|---|
 | **Muse Spark** (`muse-spark-1.3`, Meta Model API) | The agent. It reads each message, picks a ledger tool (record a sale or payment, look up balances, summarise sales, correct an entry) and fills in its arguments. It also asks a clarifying question when something is missing. |
+| **Muse Spark vision** (same model, image input) | Reads receipt photos, invoices and handwritten debt-book pages into one line per entry, which then go through the same agent and tools as a voice note. |
 | **Muse Voice Transcribe** (`muse-voice-transcribe-1.0`) | Turns WhatsApp voice notes into text. Each call is biased toward the trader's own customer names, so names come back the way the trader saved them. |
 | **Muse Spark Open on Baseten** (`meta-models/muse-spark-open-1026`) | Meta's open-weights model. It's a drop-in second provider (`LLM_PROVIDER=baseten`) and was evaluated on the same test set. |
 | **WhatsApp Cloud API** | The whole user interface: voice notes in, receipts and reply buttons out, read receipts and the "typing…" indicator. |
@@ -68,6 +70,7 @@ Each model call is logged in `usage_log`. [`scripts/cost_report.py`](scripts/cos
 | Muse Spark (≈3,500 input / 370 output tokens) | $0.0059 |
 | **One voice note, end to end** | **≈ $0.0064 (about ₦10)** |
 | One text message | ≈ $0.0047 |
+| One photo (vision read + agent) | ≈ $0.011 for a receipt, ≈ $0.026 for a 4-line debt-book page |
 
 A trader sending 20 voice notes a day costs about **$4 a month**. That's low enough for a ₦2,000–3,000 monthly subscription to be profitable. These are upper bounds: the system prompt is the same on every call, so cached-input pricing would cut it further.
 
@@ -81,14 +84,15 @@ uv run python scripts/cost_report.py --usd-ngn 1550
 
 ```
 Trader (WhatsApp)
-     │  voice note / text / button tap
+     │  voice note / photo / text / button tap
      ▼
 WhatsApp Cloud API ──webhook──▶ FastAPI (OwoBook, Render)
                                   │
                                   ├─ 1. check X-Hub-Signature-256, reply 200 at once
                                   ├─ 2. per-trader queue; skip duplicates by message id
-                                  ├─ 3. download voice note (Graph API) → WAV (ffmpeg)
-                                  ├─ 4. transcribe ─────────▶ Muse Voice Transcribe
+                                  ├─ 3. download voice note / photo (Graph API)
+                                  ├─ 4. voice → text ───────▶ Muse Voice Transcribe
+                                  │     photo → lines ──────▶ Muse Spark vision
                                   ├─ 5. agent + ledger tools ▶ Muse Spark (or Muse Spark Open on Baseten)
                                   ├─ 6. tools read/write ───▶ Postgres (Supabase)
                                   └─ 7. receipt + buttons ──▶ WhatsApp Cloud API
@@ -101,6 +105,7 @@ cron-job.org ── 08:00 Lagos ──▶ POST /tasks/reminders ──▶ due/ov
 - **Numbers come from the database, never from the model.** Muse Spark chooses the tool and its arguments. Our code saves the entry and writes the receipt from what was saved, so the amount the trader sees is exactly what's in the ledger. Money is stored as integer kobo.
 - **Arithmetic is done in code.** For "3 bags at 15k each" the model passes the quantity and unit price, and code computes ₦45,000. Part-payments work the same way.
 - **Questions are tool calls.** "Who owe me money?" runs a SQL query. The ledger is never stuffed into the prompt.
+- **Photos become text first.** Muse Spark vision turns a receipt or debt-book page into plain lines ("Chidi took 3 cartons of indomie for 19500, will pay Saturday"). Those go through the same agent and tools as a voice note, so a photo gets the same receipts, buttons and checks. An unreadable amount is written as "(amount unclear)", and OwoBook asks instead of guessing.
 - **Every write can be undone.** Correct / Fix it / Undo buttons; "Fix it" lets the next voice note correct that entry.
 - **The webhook always replies 200 within milliseconds.** Work happens in the background, one message at a time per trader. Duplicates from Meta's retries are dropped before any paid model call. Any failure sends the trader "please try again" and is logged.
 - **One-tap reminders without breaking WhatsApp's rules.** If the trader has saved a customer's number, the reminder is a link-button message (`cta_url`). Its **Send to …** button opens `wa.me/<number>?text=<reminder>`, the trader's own chat with that customer with the message ready, so the trader still decides and sends.
@@ -199,7 +204,7 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 
 ---
 
-## Demo script (≈ 3 minutes)
+## Demo script (≈ 3½ minutes)
 
 *Setup:* the deployed bot, your phone on screen-share or mirrored, and `seed_demo.py --reset` run for your number.
 
@@ -209,7 +214,8 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 4. **Fix a mistake (20s).** Tap **Fix it ✏️** on a receipt and say *"no, na 4 bags, 60k."* A corrected receipt comes back.
 5. **Ask (25s).** *"Who owe me money?"* gives the list with ⚠️ overdue flags. *"How much I sell this week?"* gives the totals.
 6. **Reminders (35s).** Say *"Mama Bisi number na 0803 123 4567"*. Trigger the morning job: "3 customers have debts due or overdue", then a polite message per customer. Tap **Send to Mama Bisi** and WhatsApp opens her chat with the reminder already typed. Forward the others with a long-press.
-7. **Under the hood (25s).** The architecture diagram: Muse Voice Transcribe → Muse Spark tool calls → Postgres. Then evals at 42/42 on Muse Spark, and about ₦10 per voice note.
+7. **Old debt book (20s).** Snap a page of a paper debt book. OwoBook lists what it read, records each customer's debt, and asks about the one amount it couldn't read.
+8. **Under the hood (25s).** The architecture diagram: Muse Voice Transcribe → Muse Spark tool calls → Postgres. Then evals at 42/42 on Muse Spark, and about ₦10 per voice note.
 
 ---
 
@@ -221,15 +227,16 @@ owobook/
   agent/               handler (dedupe, onboarding, buttons, editing), agent loop, ledger tools
   llm/                 Meta Model API, Baseten and fake providers (OpenAI-compatible tool calling)
   transcribe/          Muse Voice Transcribe client, ffmpeg → WAV
+  vision.py            receipt / debt-book photos → lines, with Muse Spark vision
   whatsapp/            Cloud API client, webhook parsing + signature check, receipt formatting
   ledger.py            business logic: sales, payments, balances, summaries
   money.py, dates.py   "45k" / "fifteen thousand naira" parsing, Lagos dates ("next tomorrow")
   reminders.py         daily reminders, 24-hour window, templates
   usage.py             token/audio cost tracking
-  prompts/system.md    the Muse Spark system prompt
+  prompts/             the Muse Spark system prompt and the photo-reading prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
 evals/                 42 labelled Pidgin/English cases + runner
-tests/                 226 tests (money, dates, ledger, agent, webhook, reminders, usage)
+tests/                 237 tests (money, dates, ledger, agent, photos, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

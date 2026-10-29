@@ -88,7 +88,9 @@ _T = {
         "fallback": "Sorry, I didn't get that 🙏 Try something like \"Mama Bisi took 3 bags of rice, she'll pay 45k Friday\".",
         "error": "Sorry, something went wrong on my side 🙏 Please try again.",
         "didnt_hear": "Sorry, I couldn't hear that voice note well 🙏 Please send it again.",
-        "unsupported": "For now I understand voice notes and text 🙏 Just tell me what you sold or who paid.",
+        "unsupported": "For now I understand voice notes, text and receipt photos 🙏 Just tell me what you sold or who paid.",
+        "photo_read": "From your photo:",
+        "no_receipt": "I couldn't find a sale, payment or amount in that photo 🙏 Send a clear photo of a receipt or your debt book page, or just tell me what happened.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You can start recording sales now.",
         "phone_saved": "📱 Saved {name}'s number: {phone}\nTheir reminders will now come with a \"Send to {name}\" button.",
         "phone_tip": "💡 Tell me a customer's number (e.g. \"{name}'s number is 0803 123 4567\") and next time you can send their reminder with one tap.",
@@ -125,7 +127,9 @@ _T = {
         "fallback": "Abeg I no understand 🙏 Try like \"Mama Bisi collect 3 bags rice, she go pay 45k Friday\".",
         "error": "Abeg try again 🙏 Something no work well for my side.",
         "didnt_hear": "Abeg I no hear the voice note well 🙏 Send am again.",
-        "unsupported": "For now I fit understand voice note and text 🙏 Just talk wetin you sell or who pay.",
+        "unsupported": "For now I fit understand voice note, text and receipt picture 🙏 Just talk wetin you sell or who pay.",
+        "photo_read": "Wetin I see for the picture:",
+        "no_receipt": "I no see any sale, payment or amount for that picture 🙏 Snap the receipt or your debt book page well, or just talk wetin happen.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You fit start to record your sales now.",
         "phone_saved": "📱 I don save {name} number: {phone}\nReminder for {name} go dey come with \"Send to {name}\" button now.",
         "phone_tip": "💡 Tell me customer number (like \"{name} number na 0803 123 4567\") and next time you go fit send the reminder with one tap.",
@@ -167,8 +171,12 @@ def _qty(q: float | None) -> str:
 
 def item_line(entry: Entry) -> str | None:
     """'3 bags rice' from quantity/unit/description. A unit that just repeats the item
-    ("3 charger charger", "2 crates crate") is dropped."""
+    ("3 charger charger", "2 crates crate") is dropped, and so is a quantity the description
+    already has ("indomie 3 ctn", read off a photo)."""
     unit, item = entry.unit or "", entry.item_description or ""
+    qty = _qty(entry.quantity)
+    if qty and re.search(rf"(?<![\d.]){re.escape(qty)}(?![\d.])", item):
+        return item
     if unit and item and unit.lower().rstrip("s") == item.lower().rstrip("s"):
         unit = ""
     parts = [_qty(entry.quantity), unit, item]
@@ -330,7 +338,8 @@ def onboarding_reply(lang: Lang) -> Reply:
             "I be your book-keeper inside WhatsApp. Just send voice note or text, I go write am down.\n\n"
             "Try am:\n"
             "🎤 \"Mama Bisi collect 3 bags rice, she go pay 45k Friday\"\n"
-            "🎤 \"Who dey owe me?\"\n\n"
+            "🎤 \"Who dey owe me?\"\n"
+            "📷 Snap your receipt or the page for your debt book\n\n"
             "Wetin be your name and your shop name?"
         )
     else:
@@ -339,7 +348,8 @@ def onboarding_reply(lang: Lang) -> Reply:
             "I'm your bookkeeper inside WhatsApp. Just send a voice note or text and I'll record it.\n\n"
             "Try:\n"
             "🎤 \"Mama Bisi took 3 bags of rice, she'll pay 45k on Friday\"\n"
-            "🎤 \"Who owes me money?\"\n\n"
+            "🎤 \"Who owes me money?\"\n"
+            "📷 A photo of a receipt or your debt book page\n\n"
             "What's your name and your shop's name?"
         )
     return Reply(text)

@@ -29,6 +29,8 @@ PRICES_PER_AUDIO_MIN: dict[str, float] = {
     "muse-voice-transcribe-1.0": 0.18 / 60,
     "fake-asr-1": 0.0,
 }
+# Suffix on usage_log.provider for a photo-reading call, so turns() can tell it from an agent call.
+VISION_TAG = ":vision"
 _warned: set[str] = set()
 
 
@@ -70,7 +72,7 @@ def log_usage(
 class Turn:
     """One inbound message and every model call it caused."""
 
-    kind: str  # "voice" | "text"
+    kind: str  # "voice" | "text" | "photo"
     llm_usd: float = 0.0
     asr_usd: float = 0.0
     input_tokens: int = 0
@@ -87,12 +89,13 @@ def turns(db: Session, since: datetime | None = None) -> list[Turn]:
     """Group usage_log rows by the inbound message that caused them.
 
     usage_log has no message id, so we replay each trader's events in time order. A voice note logs its
-    transcription first, then the inbound audio message, then the Muse Spark calls; a text message logs
-    the message, then the calls. Messages that made no model call (button taps, onboarding) are left out.
+    transcription first, then the inbound audio message, then the Muse Spark calls; a photo logs its
+    vision call, then the inbound image message, then the calls; a text message logs the message, then
+    the calls. Messages that made no model call (button taps, onboarding) are left out.
     """
     events: dict[int | None, list[tuple[datetime, int, object]]] = defaultdict(list)
-    usage = select(UsageLog).where(UsageLog.provider != "fake")  # simulator/test runs cost nothing
-    inbound = select(MessageLog).where(MessageLog.direction == "in", MessageLog.type.in_(("text", "audio")))
+    usage = select(UsageLog).where(~UsageLog.provider.startswith("fake"))  # simulator/test runs cost nothing
+    inbound = select(MessageLog).where(MessageLog.direction == "in", MessageLog.type.in_(("text", "audio", "image")))
     if since:
         usage, inbound = usage.where(UsageLog.created_at >= since), inbound.where(MessageLog.created_at >= since)
     for u in db.scalars(usage):
@@ -103,19 +106,26 @@ def turns(db: Session, since: datetime | None = None) -> list[Turn]:
     out: list[Turn] = []
     for rows in events.values():
         current: Turn | None = None
-        pending_voice = False  # a transcription was seen, its audio message not yet
+        pending: str | None = None  # "audio"/"image": its model call was seen, the inbound message not yet
         for _, _, ev in sorted(rows, key=lambda r: (r[0], r[1])):
             if isinstance(ev, MessageLog):
-                if ev.type == "audio" and pending_voice:
-                    pending_voice = False  # same voice note as the transcription just before it
+                if ev.type == pending:
+                    pending = None  # same voice note / photo as the call just before it
                     continue
-                current = Turn("voice" if ev.type == "audio" else "text")
+                current = Turn({"audio": "voice", "image": "photo"}.get(ev.type, "text"))
                 out.append(current)
             elif ev.audio_seconds:
-                current, pending_voice = Turn("voice"), True
+                current, pending = Turn("voice"), "audio"
                 out.append(current)
                 current.asr_usd += ev.est_cost_usd
                 current.audio_seconds += ev.audio_seconds
+            elif ev.provider.endswith(VISION_TAG):
+                current, pending = Turn("photo"), "image"
+                out.append(current)
+                current.llm_usd += ev.est_cost_usd
+                current.input_tokens += ev.input_tokens
+                current.output_tokens += ev.output_tokens
+                current.llm_calls += 1
             elif current is not None:
                 current.llm_usd += ev.est_cost_usd
                 current.input_tokens += ev.input_tokens

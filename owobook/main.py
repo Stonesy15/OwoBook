@@ -24,7 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from owobook.agent.handler import already_seen, handle_message, handle_unsupported, handle_voice_note
+from owobook.agent.handler import already_seen, handle_message, handle_photo, handle_unsupported, handle_voice_note
 from owobook.config import Settings, get_settings, mask_secret
 from owobook.llm import get_provider
 from owobook.llm.base import LLMProvider
@@ -191,9 +191,11 @@ async def process_inbound(services: Services, msg: InboundMessage) -> None:
                     log.info("duplicate %s ignored", msg.message_id)
                     return
             await wa.mark_read(msg.message_id)
-            audio = None
+            audio = image = None
             if msg.type == "audio" and msg.media_id:
                 audio, _ = await wa.download_media(msg.media_id)
+            elif msg.type == "image" and msg.media_id:
+                image, image_mime = await wa.download_media(msg.media_id)
 
             with services.session_factory() as db:
                 if msg.type == "text":
@@ -205,7 +207,11 @@ async def process_inbound(services: Services, msg: InboundMessage) -> None:
                 elif audio is not None:
                     replies = await handle_voice_note(db, services.provider, services.transcriber, msg.wa_id,
                                                       audio, wa_message_id=msg.message_id)
-                else:  # image (Phase 6), sticker, location, document...
+                elif image is not None:
+                    replies = await handle_photo(db, services.provider, msg.wa_id, image,
+                                                 msg.mime_type or image_mime, caption=msg.text,
+                                                 wa_message_id=msg.message_id)
+                else:  # sticker, location, document, video...
                     replies = await handle_unsupported(db, msg.wa_id, msg_type=msg.original_type or msg.type,
                                                        wa_message_id=msg.message_id)
                 db.commit()  # save the ledger before replying, so a failed send never loses a record

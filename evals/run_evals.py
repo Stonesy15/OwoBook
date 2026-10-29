@@ -74,6 +74,10 @@ def check_call(expected: dict, args: dict, today: date) -> list[str]:
         got = resolve_due_date(got_text, today) if got_text else None
         if got != want:
             problems.append(f"due {got_text!r}→{got} ≠ {want}")
+    if "phone" in expected:
+        got_phone = ledger.normalize_phone(str(args.get("phone") or ""))
+        if got_phone != expected["phone"]:
+            problems.append(f"phone {args.get('phone')!r}→{got_phone} ≠ {expected['phone']}")
     for key in ("period", "overdue_only"):
         if key in expected and args.get(key, False if key == "overdue_only" else None) != expected[key]:
             problems.append(f"{key} {args.get(key)!r} ≠ {expected[key]!r}")

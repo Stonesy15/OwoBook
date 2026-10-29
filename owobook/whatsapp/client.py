@@ -79,8 +79,26 @@ class WhatsAppClient:
             },
         })
 
+    async def send_link(self, to: str, body: str, title: str, url: str) -> str | None:
+        """Interactive link button (cta_url): one button that opens `url`."""
+        return await self._post_message({
+            "recipient_type": "individual", "to": to, "type": "interactive",
+            "interactive": {
+                "type": "cta_url",
+                "body": {"text": body[:MAX_BUTTON_BODY]},
+                "action": {"name": "cta_url", "parameters": {"display_text": title[:MAX_BUTTON_TITLE], "url": url}},
+            },
+        })
+
     async def send_reply(self, to: str, reply: Reply) -> None:
-        """Send one OwoBook reply: plain text, or text with reply buttons."""
+        """Send one OwoBook reply: plain text, text with reply buttons, or text with a link button."""
+        if reply.link:
+            if len(reply.text) <= MAX_BUTTON_BODY:
+                await self.send_link(to, reply.text, reply.link.title, reply.link.url)
+            else:
+                await self.send_text(to, reply.text)
+                await self.send_link(to, "👆", reply.link.title, reply.link.url)
+            return
         if not reply.buttons:
             await self.send_text(to, reply.text)
             return

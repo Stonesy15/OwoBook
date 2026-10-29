@@ -91,11 +91,19 @@ def _heads_up(debtors: list[Debtor], lang: Lang, today: date) -> str:
 
 
 def reminder_replies(db: Session, trader: Trader, debtors: list[Debtor], lang: Lang, today: date) -> list[Reply]:
-    """Heads-up for the trader, then one forwardable draft per customer (at most MAX_DRAFTS)."""
+    """Heads-up for the trader, then one draft per customer (at most MAX_DRAFTS). The trader forwards it, or,
+    if we have the customer's number, taps "Send to <name>" to open their own chat with it already typed."""
     if not debtors:
         return [Reply(fmt.t(lang, "no_overdue"))]
-    replies = [Reply(_heads_up(debtors, lang, today))]
-    replies += [Reply(customer_draft(db, trader, d, lang, today)) for d in debtors[:MAX_DRAFTS]]
+    shown = debtors[:MAX_DRAFTS]
+    heads_up = _heads_up(debtors, lang, today)
+    if not any(c.phone for c in ledger.list_customers(db, trader)):  # teach the one-tap send until they use it
+        heads_up += "\n\n" + fmt.t(lang, "phone_tip", name=shown[0].customer.display_name)
+    replies = [Reply(heads_up)]
+    for d in shown:
+        draft = customer_draft(db, trader, d, lang, today)
+        phone = d.customer.phone
+        replies.append(Reply(draft, link=fmt.send_to_link(d.customer.display_name, phone, draft) if phone else None))
     if len(debtors) > MAX_DRAFTS:
         more = len(debtors) - MAX_DRAFTS
         replies.append(Reply(

@@ -258,3 +258,22 @@ def test_null_strings_from_the_model_are_ignored(db):
 
     result = execute_tool(ctx, "record_sale", {"customer_name": "null", "amount_naira": "5k", "paid": False})
     assert result.is_error  # credit sale with no customer → ask who, never a customer called "Null"
+
+
+async def test_save_customer_phone(db):
+    await onboard(db)
+    await say(db, "Tutu collect 3 charger 45k, he go pay Saturday")
+    [reply] = await say(db, "Tutu number na 0803 123 4567")
+    assert "+234 803 123 4567" in reply.text and "Send to Tutu" in reply.text
+    trader, _ = ledger.get_or_create_trader(db, WA)
+    tutu, _ = ledger.find_customer(db, trader, "Tutu")
+    assert tutu.phone == "2348031234567"
+
+
+async def test_bad_phone_number_asks_again(db):
+    await onboard(db)
+    replies = await say(db, "Tutu number na 0803 12", provider=FakeProvider(script=[
+        LLMResponse(content=None, tool_calls=[ToolCall("c1", "save_customer_phone", {"customer_name": "Tutu", "phone": "0803 12"})]),
+        LLMResponse(content="That number no complete. Abeg send am again?"),
+    ]))
+    assert "no complete" in replies[-1].text

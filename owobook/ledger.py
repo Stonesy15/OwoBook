@@ -141,6 +141,37 @@ def find_customer(db: Session, trader: Trader, name: str) -> tuple[Customer | No
     return None, [c for _, c in scored]
 
 
+def normalize_phone(text: str, default_country: str = "234") -> str | None:
+    """A phone number as WhatsApp wants it: digits with country code, no '+' or leading 0.
+
+    '0803 123 4567' → '2348031234567' (Nigerian local), '+234 803…' / '234803…' kept,
+    '803 123 4567' → '2348031234567'. Anything that isn't a plausible number → None.
+    """
+    has_plus = text.strip().startswith("+")
+    digits = re.sub(r"\D", "", text)
+    if has_plus or digits.startswith(default_country):
+        number = digits
+    elif digits.startswith("0") and len(digits) == 11:  # Nigerian local format
+        number = default_country + digits[1:]
+    elif len(digits) == 10 and digits[0] in "789":  # local number without the 0
+        number = default_country + digits
+    else:
+        return None
+    if number.startswith(default_country + "0"):  # "+234 0803…"
+        number = default_country + number[len(default_country) + 1:]
+    return number if 10 <= len(number) <= 15 else None
+
+
+def set_customer_phone(db: Session, trader: Trader, customer: Customer, phone: str) -> Customer:
+    """Save a customer's WhatsApp number (normalized), for one-tap reminders."""
+    number = normalize_phone(phone)
+    if not number:
+        raise LedgerError(f"Not a phone number: {phone!r}", question="That number no complete. Abeg send am again?")
+    customer.phone = number
+    db.flush()
+    return customer
+
+
 def resolve_customer(db: Session, trader: Trader, name: str, *, create: bool, new_customer: bool = False) -> Customer:
     """Find a customer by name, creating one if allowed.
 

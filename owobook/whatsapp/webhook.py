@@ -18,7 +18,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 # Types we act on. Everything else gets the friendly "voice note or text for now" reply.
-SUPPORTED_TYPES = {"text", "audio", "image", "button"}
+SUPPORTED_TYPES = {"text", "audio", "image", "button", "contacts"}
 
 
 @dataclass
@@ -63,6 +63,16 @@ def _parse_one(msg: dict[str, Any], names: dict[str, str]) -> InboundMessage | N
         reply = interactive.get("button_reply") or interactive.get("list_reply")
         if reply and reply.get("id"):
             return InboundMessage(type="button", button_id=reply["id"], text=reply.get("title"), **base)
+    if mtype == "contacts":  # trader shared a customer's contact card → handled like "X number na …"
+        cards = []
+        for card in msg.get("contacts") or []:
+            name = (card.get("name") or {}).get("formatted_name") or (card.get("name") or {}).get("first_name")
+            phones = card.get("phones") or [{}]
+            phone = "+" + phones[0]["wa_id"] if phones[0].get("wa_id") else phones[0].get("phone")
+            if name and phone:
+                cards.append(f"Save this customer's number (contact card): {name}, {phone}")
+        if cards:
+            return InboundMessage(type="text", text="\n".join(cards), **base)
     if mtype == "button":  # quick-reply button on a template message
         button = msg.get("button") or {}
         if button.get("payload"):

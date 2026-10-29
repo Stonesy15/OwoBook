@@ -7,6 +7,7 @@ never written by the model. Replies mirror the trader's language (English or Pid
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from urllib.parse import quote
 
 from owobook.dates import format_date, today_local
 from owobook.ledger import Debtor, SalesSummary
@@ -23,11 +24,20 @@ class Button:
 
 
 @dataclass
+class Link:
+    """A link button (WhatsApp `cta_url`): opens `url` when tapped."""
+
+    title: str  # WhatsApp limit: 20 characters
+    url: str
+
+
+@dataclass
 class Reply:
-    """One outgoing WhatsApp message: plain text, or text with up to 3 reply buttons."""
+    """One outgoing WhatsApp message: plain text, text with up to 3 reply buttons, or text with one link button."""
 
     text: str
     buttons: list[Button] = field(default_factory=list)
+    link: Link | None = None
 
 
 # ---------- language ----------------------------------------------------------------------
@@ -80,6 +90,8 @@ _T = {
         "didnt_hear": "Sorry, I couldn't hear that voice note well 🙏 Please send it again.",
         "unsupported": "For now I understand voice notes and text 🙏 Just tell me what you sold or who paid.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You can start recording sales now.",
+        "phone_saved": "📱 Saved {name}'s number: {phone}\nTheir reminders will now come with a \"Send to {name}\" button.",
+        "phone_tip": "💡 Tell me a customer's number (e.g. \"{name}'s number is 0803 123 4567\") and next time you can send their reminder with one tap.",
     },
     "pidgin": {
         "recorded": "✅ I don write am",
@@ -115,6 +127,8 @@ _T = {
         "didnt_hear": "Abeg I no hear the voice note well 🙏 Send am again.",
         "unsupported": "For now I fit understand voice note and text 🙏 Just talk wetin you sell or who pay.",
         "profile_saved": "Nice to meet you, {name}! 🙌 You fit start to record your sales now.",
+        "phone_saved": "📱 I don save {name} number: {phone}\nReminder for {name} go dey come with \"Send to {name}\" button now.",
+        "phone_tip": "💡 Tell me customer number (like \"{name} number na 0803 123 4567\") and next time you go fit send the reminder with one tap.",
     },
 }
 
@@ -331,8 +345,23 @@ def onboarding_reply(lang: Lang) -> Reply:
     return Reply(text)
 
 
+def format_phone(number: str) -> str:
+    """'2348031234567' → '+234 803 123 4567' (other countries: '+' and the digits)."""
+    if number.startswith("234") and len(number) == 13:
+        return f"+234 {number[3:6]} {number[6:9]} {number[9:]}"
+    return "+" + number
+
+
+def send_to_link(name: str, phone: str, message: str) -> Link:
+    """Link button that opens the trader's own chat with this customer, message already typed."""
+    title = f"Send to {name}"
+    return Link(title if len(title) <= 20 else "Send to customer", f"https://wa.me/{phone}?text={quote(message)}")
+
+
 def render_plain(reply: Reply) -> str:
     """Text-only rendering (simulator, logs)."""
+    if reply.link:
+        return f"{reply.text}\n\n[🔗 {reply.link.title}] {reply.link.url}"
     if not reply.buttons:
         return reply.text
     buttons = "   ".join(f"[{i}] {b.title}" for i, b in enumerate(reply.buttons, 1))

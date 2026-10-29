@@ -30,9 +30,10 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | "Who owe me money?" | Lists debtors by amount, with overdue ⚠️ flags and a total |
 | "How much I sell this week?" | Cash sales, credit sales, money collected and expenses |
 | *(no amount, or an unclear name)* | Asks **one** short question instead of guessing |
-| 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer, ready to forward |
+| "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
+| 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
 
-It replies in Pidgin to Pidgin and in English to English. It never messages the trader's customers itself.
+It replies in Pidgin to Pidgin and in English to English. It never messages the trader's customers itself: reminders always go out from the trader's own WhatsApp, which keeps them within WhatsApp's rules and looks trustworthy to the customer.
 
 ---
 
@@ -49,12 +50,12 @@ No non-Meta model is used anywhere.
 
 ### Accuracy (evals)
 
-[`evals/cases.jsonl`](evals/cases.jsonl) holds 39 real-style Pidgin and English messages, each with the ledger entry it should produce: "45k", "4.5k", "fifteen thousand naira", "3 bags at 15k each", part-payments, "next tomorrow" and so on. [`evals/run_evals.py`](evals/run_evals.py) runs them through the real agent and tools.
+[`evals/cases.jsonl`](evals/cases.jsonl) holds 42 real-style Pidgin and English messages, each with the ledger entry it should produce: "45k", "4.5k", "fifteen thousand naira", "3 bags at 15k each", part-payments, "next tomorrow", saving customer numbers and so on. [`evals/run_evals.py`](evals/run_evals.py) runs them through the real agent and tools.
 
 | Provider | Model | Score |
 |---|---|---|
-| Meta Model API | `muse-spark-1.3` | **39/39** (two runs) |
-| Baseten | `meta-models/muse-spark-open-1026` | **39/39** (two runs) |
+| Meta Model API | `muse-spark-1.3` | **42/42** (two runs) |
+| Baseten | `meta-models/muse-spark-open-1026` | **39/39** (two runs, before the 3 phone-number cases were added) |
 | Rule-based fake (baseline) | — | 28/36 on the earlier 36-case set |
 
 ### Cost per voice note
@@ -102,6 +103,7 @@ cron-job.org ── 08:00 Lagos ──▶ POST /tasks/reminders ──▶ due/ov
 - **Questions are tool calls.** "Who owe me money?" runs a SQL query. The ledger is never stuffed into the prompt.
 - **Every write can be undone.** Correct / Fix it / Undo buttons; "Fix it" lets the next voice note correct that entry.
 - **The webhook always replies 200 within milliseconds.** Work happens in the background, one message at a time per trader. Duplicates from Meta's retries are dropped before any paid model call. Any failure sends the trader "please try again" and is logged.
+- **One-tap reminders without breaking WhatsApp's rules.** If the trader has saved a customer's number, the reminder is a link-button message (`cta_url`). Its **Send to …** button opens `wa.me/<number>?text=<reminder>`, the trader's own chat with that customer with the message ready, so the trader still decides and sends.
 - **WhatsApp's 24-hour window is respected.** Reminders are sent as normal messages if the trader wrote in the last 24 hours. Otherwise they use an approved template if one is configured, and are skipped if not.
 
 ---
@@ -113,7 +115,7 @@ Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync
 cp .env.example .env          # add your keys
-uv run pytest                 # 210 tests, no keys needed
+uv run pytest                 # 226 tests, no keys needed
 ```
 
 **Terminal simulator.** Chat with OwoBook without WhatsApp:
@@ -206,8 +208,8 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 3. **Part-payment (25s).** Voice: *"Tutu collect three charger, 45k. He give me 20k, he go balance Saturday."* One receipt: ₦45,000 total, ₦20,000 paid, ₦25,000 owing.
 4. **Fix a mistake (20s).** Tap **Fix it ✏️** on a receipt and say *"no, na 4 bags, 60k."* A corrected receipt comes back.
 5. **Ask (25s).** *"Who owe me money?"* gives the list with ⚠️ overdue flags. *"How much I sell this week?"* gives the totals.
-6. **Reminders (25s).** Trigger the morning job. The trader gets "3 customers have debts due or overdue", then a polite message per customer. Long-press one and forward it.
-7. **Under the hood (25s).** The architecture diagram: Muse Voice Transcribe → Muse Spark tool calls → Postgres. Then evals at 39/39 on both Meta models, and about ₦10 per voice note.
+6. **Reminders (35s).** Say *"Mama Bisi number na 0803 123 4567"*. Trigger the morning job: "3 customers have debts due or overdue", then a polite message per customer. Tap **Send to Mama Bisi** and WhatsApp opens her chat with the reminder already typed. Forward the others with a long-press.
+7. **Under the hood (25s).** The architecture diagram: Muse Voice Transcribe → Muse Spark tool calls → Postgres. Then evals at 42/42 on Muse Spark, and about ₦10 per voice note.
 
 ---
 
@@ -226,8 +228,8 @@ owobook/
   usage.py             token/audio cost tracking
   prompts/system.md    the Muse Spark system prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
-evals/                 39 labelled Pidgin/English cases + runner
-tests/                 210 tests (money, dates, ledger, agent, webhook, reminders, usage)
+evals/                 42 labelled Pidgin/English cases + runner
+tests/                 226 tests (money, dates, ledger, agent, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

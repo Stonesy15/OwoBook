@@ -131,6 +131,15 @@ class SaveProfile(ToolArgs):
     language_pref: Literal["pidgin", "english", "yoruba", "auto"] | None = None
 
 
+class SaveCustomerPhone(ToolArgs):
+    """Save a customer's phone/WhatsApp number ("Tutu number na 0803 123 4567"), so their debt reminders
+    come with a one-tap "Send to <name>" button. Pass the number exactly as said."""
+
+    customer_name: str
+    phone: str = Field(description="The number as said, e.g. '0803 123 4567' or '+234 803 123 4567'.")
+    new_customer: bool = Field(False, description="true only if the trader confirmed this is a NEW customer.")
+
+
 TOOL_MODELS: dict[str, type[BaseModel]] = {
     "record_sale": RecordSale,
     "record_payment": RecordPayment,
@@ -142,6 +151,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "delete_entry": DeleteEntry,
     "ask_clarification": AskClarification,
     "save_profile": SaveProfile,
+    "save_customer_phone": SaveCustomerPhone,
 }
 
 
@@ -459,6 +469,13 @@ def _save_profile(ctx: AgentContext, a: SaveProfile) -> ToolResult:
     return ToolResult(data={"ok": True, "name": tr.name, "shop_name": tr.shop_name}, reply=Reply(text))
 
 
+def _save_customer_phone(ctx: AgentContext, a: SaveCustomerPhone) -> ToolResult:
+    customer = ledger.resolve_customer(ctx.db, ctx.trader, a.customer_name, create=True, new_customer=a.new_customer)
+    ledger.set_customer_phone(ctx.db, ctx.trader, customer, a.phone)
+    text = fmt.t(ctx.lang, "phone_saved", name=customer.display_name, phone=fmt.format_phone(customer.phone))
+    return ToolResult(data={"ok": True, "customer": customer.display_name, "phone": customer.phone}, reply=Reply(text))
+
+
 _HANDLERS = {
     "record_sale": _record_sale,
     "record_payment": _record_payment,
@@ -470,6 +487,7 @@ _HANDLERS = {
     "delete_entry": _delete_entry,
     "ask_clarification": _ask_clarification,
     "save_profile": _save_profile,
+    "save_customer_phone": _save_customer_phone,
 }
 
 

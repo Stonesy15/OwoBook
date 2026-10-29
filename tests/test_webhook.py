@@ -17,7 +17,7 @@ from owobook.main import Services, create_app
 from owobook.models import Entry, MessageLog
 from owobook.transcribe.fake import FakeTranscriber
 from owobook.whatsapp.client import WhatsAppClient
-from owobook.whatsapp.formatting import Button, Reply
+from owobook.whatsapp.formatting import Button, Link, Reply
 from owobook.whatsapp.webhook import parse_webhook, verify_signature
 
 SECRET = "app-secret"
@@ -331,3 +331,31 @@ def test_access_log_hides_verify_token():
                                ("1.2.3.4:0", "GET", "/webhook?hub.verify_token=secret&hub.challenge=1", "1.1", 200), None)
     _HideQueryString().filter(record)
     assert "secret" not in record.getMessage() and "/webhook?…" in record.getMessage()
+
+
+def test_shared_contact_card_saves_the_customer_number(app_env):
+    client, wa, services = app_env
+    card = {"from": TRADER, "id": "wamid.C1", "timestamp": "1761650000", "type": "contacts", "contacts": [
+        {"name": {"formatted_name": "Tutu", "first_name": "Tutu"},
+         "phones": [{"phone": "+234 803 123 4567", "wa_id": "2348031234567", "type": "CELL"}]},
+    ]}
+    [parsed] = parse_webhook(envelope(card))
+    assert parsed.type == "text" and "Tutu, +2348031234567" in parsed.text
+
+    post(client, envelope(text_msg("hello", mid="wamid.H0")))  # onboard first
+    post(client, envelope(card))
+    assert "Send to Tutu" in wa.sent[-1][1].text and "+234 803 123 4567" in wa.sent[-1][1].text
+
+
+@respx.mock
+async def test_client_sends_link_button():
+    route = respx.post(f"{GRAPH}/555/messages").mock(return_value=httpx.Response(
+        200, json={"messaging_product": "whatsapp", "contacts": [], "messages": [{"id": "wamid.OUT"}]}
+    ))
+    wa = WhatsAppClient(settings())
+    await wa.send_reply(TRADER, Reply("Good morning Tutu 🙏", link=Link("Send to Tutu", "https://wa.me/2348031234567?text=hi")))
+    body = json.loads(route.calls.last.request.content)
+    assert body["interactive"]["type"] == "cta_url" and body["interactive"]["body"]["text"] == "Good morning Tutu 🙏"
+    assert body["interactive"]["action"] == {
+        "name": "cta_url", "parameters": {"display_text": "Send to Tutu", "url": "https://wa.me/2348031234567?text=hi"},
+    }

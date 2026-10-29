@@ -37,3 +37,6 @@
 {"id": "part-paid-balance", "text": "Emeka buy 3 bags rice, e give me 60k, e go balance me 70k Friday", "expect": [{"tool": "record_sale", "customer": "Emeka", "paid": false, "amount": 130000, "paid_now": 60000, "quantity": 3, "due": "Friday"}]}
 {"id": "part-paid-total", "text": "Blessing collect 2 bags beans 50k, she pay 20k now, she go bring the rest Saturday", "expect": [{"tool": "record_sale", "customer": "Blessing", "paid": false, "amount": 50000, "paid_now": 20000, "due": "Saturday"}]}
 {"id": "part-paid-english", "text": "Chidi took 4 cartons of milk for 80k, he paid 30k and will pay the rest next week", "expect": [{"tool": "record_sale", "customer": "Chidi", "paid": false, "amount": 80000, "paid_now": 30000, "quantity": 4, "due": "next week"}]}
+{"id": "phone-pidgin", "text": "Mama Bisi number na 0803 123 4567", "expect": [{"tool": "save_customer_phone", "customer": "Mama Bisi", "phone": "2348031234567"}]}
+{"id": "phone-english", "text": "Save Chidi's number, it's +234 905 555 1234", "expect": [{"tool": "save_customer_phone", "customer": "Chidi", "phone": "2349055551234"}]}
+{"id": "phone-contact-card", "text": "Save this customer's number (contact card): Emeka, +2348022223333", "expect": [{"tool": "save_customer_phone", "customer": "Emeka", "phone": "2348022223333"}]}

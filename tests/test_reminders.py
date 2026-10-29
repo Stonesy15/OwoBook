@@ -154,7 +154,7 @@ async def test_one_heads_up_for_a_single_debtor(factory):
         ledger.record_payment(db, trader, customer_name="Alhaji Musa", amount_kobo=250 * K)
         db.commit()
     [result] = await run(factory, wa, dry_run=True)
-    assert result.replies[0].text == "⏰ Mama Bisi's ₦35,000 is due today. Here's a reminder you can forward 👇"
+    assert result.replies[0].text.startswith("⏰ Mama Bisi's ₦35,000 is due today. Here's a reminder you can forward 👇")
 
 
 async def test_many_debtors_are_capped(factory):
@@ -254,3 +254,29 @@ async def test_overlapping_triggers_run_reminders_once(factory, monkeypatch):
                         transcriber=FakeTranscriber(), whatsapp=wa)
     await asyncio.gather(reminders_job(services), reminders_job(services))
     assert len(wa.sent) == 3  # one heads-up + two drafts, not six
+
+
+async def test_customer_with_phone_gets_send_to_button(factory):
+    """Saved number → the draft comes with a link that opens the trader's own chat with that customer."""
+    from urllib.parse import parse_qs, urlparse
+
+    make_trader(factory)
+    with factory() as db:
+        trader, _ = ledger.get_or_create_trader(db, WA)
+        bisi, _ = ledger.find_customer(db, trader, "Mama Bisi")
+        ledger.set_customer_phone(db, trader, bisi, "0803 123 4567")
+        db.commit()
+    [result] = await run(factory, FakeWhatsApp(), dry_run=True)
+    heads_up, bisi_draft, musa_draft = result.replies
+    assert "0803 123 4567" not in heads_up.text  # tip is gone once the trader uses the feature
+    assert bisi_draft.link.title == "Send to Mama Bisi"
+    url = urlparse(bisi_draft.link.url)
+    assert (url.netloc, url.path) == ("wa.me", "/2348031234567")
+    assert parse_qs(url.query)["text"] == [bisi_draft.text]  # exactly the draft, ready to send
+    assert musa_draft.link is None  # no number → forward as before
+
+
+async def test_tip_explains_how_to_add_a_number(factory):
+    make_trader(factory)
+    [result] = await run(factory, FakeWhatsApp(), dry_run=True)
+    assert "💡" in result.replies[0].text and "Mama Bisi's number is 0803 123 4567" in result.replies[0].text

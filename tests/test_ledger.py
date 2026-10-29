@@ -211,3 +211,19 @@ def test_edit_paid_now(db, trader):
     ledger.update_entry(db, trader, entry.id, paid=True)  # "e don pay everything"
     assert entry.type == EntryType.CASH_SALE and entry.paid_now_kobo == 0
     assert ledger.customer_balance(db, trader, entry.customer) == 0
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("0803 123 4567", "2348031234567"),
+    ("08031234567", "2348031234567"),
+    ("+234 803 123 4567", "2348031234567"),
+    ("+234 0803 123 4567", "2348031234567"),
+    ("2348031234567", "2348031234567"),
+    ("803-123-4567", "2348031234567"),
+    ("+44 7911 123456", "447911123456"),
+    ("0803 12", None),
+    ("12345", None),
+    ("call me", None),
+])
+def test_normalize_phone(raw, expected):
+    assert ledger.normalize_phone(raw) == expected

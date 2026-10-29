@@ -135,6 +135,18 @@ class FakeProvider:
                 return self._call("ask_clarification", question="Wetin I go change? Talk the correct amount or quantity.")
             return self._call("update_entry", **args)
 
+        # Customer number: "Tutu number na 0803 123 4567", "save Mama Bisi number 0803…", shared contact card
+        phone_m = re.search(r"(\+?\d[\d\s-]{8,}\d)", text)
+        if phone_m and re.search(r"\b(number|phone|line|contact card)\b", low):
+            before = text[:phone_m.start()]
+            before = re.sub(r"^.*contact card\)?:\s*", "", before, flags=re.I)
+            before = re.sub(r"^\s*(?:abeg\s+)?(?:save|add)\s+", "", before, flags=re.I)
+            before = re.sub(r"(?:'s)?\s*\b(?:phone\s+)?(?:number|phone|line)\b.*$|[,:]\s*$", "", before, flags=re.I)
+            name = _known_customer_in(before, known) or _clean_name(before)
+            if not name:
+                return self._call("ask_clarification", question="Na whose number be this?")
+            return self._call("save_customer_phone", customer_name=name, phone=phone_m[1].strip())
+
         # Profile: "my name is Hosea, my shop is Hosea Provisions"
         name_m = re.search(r"\b(?:my name is|my name na|i be|i am|i'm|call me)\s+([a-z][a-z .']*?)(?=[,.]|\s+and\b|\s+my\b|$)", low)
         shop_m = re.search(r"\b(?:my shop(?: name)? (?:is|na)|shop name (?:is|na)|i get shop wey dem dey call)\s+([^,.]+)", text, re.I)

@@ -63,7 +63,9 @@ No non-Meta model is used anywhere.
 |---|---|---|
 | Meta Model API | `muse-spark-1.3` | **42/42** (two runs) |
 | Baseten | `meta-models/muse-spark-open-1026` | **39/39** (two runs, before the 3 phone-number cases were added) |
-| Rule-based fake (baseline) | — | 28/36 on the earlier 36-case set |
+| Keyword rules, no AI (for comparison) | — | 28/36 on the earlier 36-case set |
+
+The gap shows what Muse Spark adds: keyword rules miss the loose, mixed Pidgin-English of real voice notes that Muse Spark handles. (The same keyword rules let the automated tests run offline without API keys.)
 
 ### Cost per voice note
 

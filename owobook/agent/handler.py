@@ -6,6 +6,7 @@ editing mode, the agent loop, message logging, and friendly errors.
 
 import logging
 import re
+from dataclasses import replace
 from datetime import datetime
 
 from sqlalchemy import select
@@ -173,7 +174,7 @@ async def handle_voice_note(
         db, provider, wa_id, text=transcript.text, msg_type="audio", wa_message_id=wa_message_id, now=now
     )
     if replies:
-        replies[0] = Reply(f"🎤 \"{transcript.text}\"\n\n{replies[0].text}", replies[0].buttons, replies[0].link)
+        replies[0] = replace(replies[0], text=f"🎤 \"{transcript.text}\"\n\n{replies[0].text}")
     return replies
 
 
@@ -218,8 +219,7 @@ async def handle_photo(
                                    wa_message_id=wa_message_id, now=now)
     if replies:
         read = "\n".join(f"• {line}" for line in reading.lines)
-        replies[0] = Reply(f"🧾 {fmt.t(lang, 'photo_read')}\n{read}\n\n{replies[0].text}", replies[0].buttons,
-                           replies[0].link)
+        replies[0] = replace(replies[0], text=f"🧾 {fmt.t(lang, 'photo_read')}\n{read}\n\n{replies[0].text}")
     return replies
 
 

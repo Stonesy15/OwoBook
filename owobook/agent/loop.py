@@ -3,6 +3,7 @@ and return the WhatsApp replies composed from the tool results."""
 
 import json
 import logging
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -132,4 +133,7 @@ async def run_agent(
     else:
         log.warning("agent hit MAX_STEPS for trader %s", ctx.trader.id)
 
+    if any(r.image for r in replies):  # the picture receipt is already here: drop the "say receipt" hint
+        hint = "\n\n" + fmt.t(ctx.lang, "receipt_hint", name="\0").split("\0")[0]
+        replies = [r if r.image else replace(r, text=r.text.split(hint)[0]) for r in replies]
     return replies or [Reply(fmt.t(ctx.lang, "fallback"))]

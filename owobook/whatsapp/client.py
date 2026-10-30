@@ -5,6 +5,8 @@ Docs (checked 28 Oct 2026, Graph API v26.0):
   (≤ 3 buttons, title ≤ 20 chars, id ≤ 256, body ≤ 1024), template.
 - GET /{version}/{media_id} → {"url", "mime_type", "file_size", ...}; GET url with the same token.
   The URL expires after 5 minutes. Audio is capped at 16 MB.
+- POST /{version}/{phone_number_id}/media (multipart: messaging_product, type, file) → {"id"}; uploaded
+  ids last 30 days. Then send {"type": "image", "image": {"id", "caption" ≤ 1024}}. PNG/JPEG ≤ 5 MB.
 """
 
 import logging
@@ -35,6 +37,7 @@ class WhatsAppClient:
         s = self.settings
         self.base = f"https://graph.facebook.com/{s.wa_graph_version}"
         self.messages_url = f"{self.base}/{s.wa_phone_number_id}/messages"
+        self.media_url = f"{self.base}/{s.wa_phone_number_id}/media"
 
     @property
     def _auth(self) -> dict[str, str]:
@@ -90,8 +93,30 @@ class WhatsAppClient:
             },
         })
 
+    async def upload_media(self, data: bytes, mime_type: str = "image/png", filename: str = "receipt.png") -> str:
+        """Upload a file we made (a picture receipt); returns the media id to send."""
+        try:
+            resp = await request_with_retries(
+                self._http, "POST", self.media_url, headers=self._auth, label="whatsapp media upload",
+                data={"messaging_product": "whatsapp", "type": mime_type},
+                files={"file": (filename, data, mime_type)},
+            )
+            return resp.json()["id"]
+        except (HTTPError, KeyError, ValueError) as exc:
+            raise WhatsAppError(f"could not upload media: {exc}") from exc
+
+    async def send_image(self, to: str, image: bytes, caption: str = "") -> str | None:
+        media_id = await self.upload_media(image)
+        payload: dict[str, Any] = {"id": media_id}
+        if caption:
+            payload["caption"] = caption[:MAX_BUTTON_BODY]
+        return await self._post_message({"recipient_type": "individual", "to": to, "type": "image", "image": payload})
+
     async def send_reply(self, to: str, reply: Reply) -> None:
-        """Send one OwoBook reply: plain text, text with reply buttons, or text with a link button."""
+        """Send one OwoBook reply: plain text, text with reply buttons, text with a link button, or a picture."""
+        if reply.image:
+            await self.send_image(to, reply.image, reply.text)
+            return
         if reply.link:
             if len(reply.text) <= MAX_BUTTON_BODY:
                 await self.send_link(to, reply.text, reply.link.title, reply.link.url)

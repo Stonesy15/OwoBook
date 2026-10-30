@@ -152,6 +152,13 @@ class FakeProvider:
                 return self._call("ask_clarification", question="Na whose number be this?")
             return self._call("save_customer_phone", customer_name=name, phone=phone_m[1].strip())
 
+        # Picture receipt: "send me receipt", "receipt for Mama Bisi", "give Tunde receipt"
+        if re.search(r"\b(receipt|rìsíìtì|risiti|rasit|risiit)\b", low) and not amounts:
+            name = _known_customer_in(text, known)
+            if not name and (m := re.search(r"\breceipt\s+(?:for|of|give)\s+([a-z][a-z ]+?)\s*[.?!]*$", low)):
+                name = _clean_name(m[1])
+            return self._call("make_receipt", customer_name=name)
+
         # Reply language: "reply me in Yoruba", "speak Hausa", "change language to Igbo"
         if lang_m := re.search(r"\b(?:reply|answer|talk|speak|yarn|respond|language)\b.*?\b(english|pidgin|yoruba|yorùbá|hausa|igbo)\b", low):
             return self._call("save_profile", language_pref=lang_m[1].replace("yorùbá", "yoruba"))

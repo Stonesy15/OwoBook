@@ -35,11 +35,13 @@ class Link:
 
 @dataclass
 class Reply:
-    """One outgoing WhatsApp message: plain text, text with up to 3 reply buttons, or text with one link button."""
+    """One outgoing WhatsApp message: plain text, text with up to 3 reply buttons, text with one link button,
+    or a PNG image (a picture receipt) with `text` as its caption."""
 
     text: str
     buttons: list[Button] = field(default_factory=list)
     link: Link | None = None
+    image: bytes | None = None
 
 
 # ---------- language ----------------------------------------------------------------------
@@ -131,6 +133,8 @@ def sale_receipt(
         lines.append(f"💰 {format_naira(entry.amount_kobo)} — {t(lang, 'paid_cash')}")
     if customer and balance_kobo is not None and entry.type == EntryType.CREDIT_SALE:
         lines += ["", balance_sentence(customer.display_name, balance_kobo, lang, total=True)]
+    if customer and entry.type == EntryType.CREDIT_SALE and entry.paid_now_kobo:
+        lines += ["", t(lang, "receipt_hint", name=customer.display_name)]
     return Reply("\n".join(lines), entry_buttons(entry.id))
 
 
@@ -142,6 +146,8 @@ def payment_receipt(entry: Entry, customer: Customer, balance_kobo: int, lang: L
         f"💰 {format_naira(entry.amount_kobo)} {t(lang, 'received')}",
         "",
         balance_sentence(customer.display_name, balance_kobo, lang),
+        "",
+        t(lang, "receipt_hint", name=customer.display_name),
     ]
     return Reply("\n".join(lines), entry_buttons(entry.id))
 
@@ -240,6 +246,8 @@ def send_to_link(name: str, phone: str, message: str) -> Link:
 
 def render_plain(reply: Reply) -> str:
     """Text-only rendering (simulator, logs)."""
+    if reply.image:
+        return f"[🖼 receipt picture]\n{reply.text}"
     if reply.link:
         return f"{reply.text}\n\n[🔗 {reply.link.title}] {reply.link.url}"
     if not reply.buttons:

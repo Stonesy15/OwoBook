@@ -420,16 +420,32 @@ _signed_amount = case(
 )
 
 
-def customer_balance(db: Session, trader: Trader, customer: Customer) -> int:
-    """Credit sales (less anything paid on the spot) minus payments, in kobo (pending + confirmed; undone entries ignored)."""
-    total = db.scalar(
-        select(func.coalesce(func.sum(_signed_amount), 0)).where(
-            Entry.trader_id == trader.id,
-            Entry.customer_id == customer.id,
-            Entry.status != EntryStatus.DELETED,
-        )
+def customer_balance(db: Session, trader: Trader, customer: Customer, *, upto_entry_id: int | None = None) -> int:
+    """Credit sales (less anything paid on the spot) minus payments, in kobo (pending + confirmed; undone entries ignored).
+    With `upto_entry_id`: the balance right after that entry (for receipts of earlier sales/payments)."""
+    query = select(func.coalesce(func.sum(_signed_amount), 0)).where(
+        Entry.trader_id == trader.id,
+        Entry.customer_id == customer.id,
+        Entry.status != EntryStatus.DELETED,
     )
-    return int(total or 0)
+    if upto_entry_id is not None:
+        query = query.where(Entry.id <= upto_entry_id)
+    return int(db.scalar(query) or 0)
+
+
+RECEIPT_TYPES = (EntryType.CASH_SALE, EntryType.CREDIT_SALE, EntryType.PAYMENT)
+
+
+def latest_receipt_entry(db: Session, trader: Trader, customer: Customer | None = None) -> Entry | None:
+    """The newest sale or payment (for this customer, if given) — what "send me receipt" means."""
+    query = select(Entry).where(
+        Entry.trader_id == trader.id,
+        Entry.status != EntryStatus.DELETED,
+        Entry.type.in_(RECEIPT_TYPES),
+    )
+    if customer is not None:
+        query = query.where(Entry.customer_id == customer.id)
+    return db.scalars(query.order_by(Entry.created_at.desc(), Entry.id.desc()).limit(1)).first()
 
 
 def outstanding_sales(db: Session, trader: Trader, customer: Customer) -> list[tuple[Entry, int]]:

@@ -32,6 +32,7 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | *(no amount, or an unclear name)* | Asks **one** short question instead of guessing |
 | "Reply me in Yoruba" | Every reply from then on is in Yorùbá: receipts, lists, reminders and questions. Also Hausa, Igbo, Pidgin and English |
 | 📷 *a photo of a receipt, or a page of the old paper debt book* | Reads it with Muse Spark vision and records every line: one receipt per customer, and a question for any amount it can't read |
+| "Send me receipt for Mama Bisi" | Sends a **picture receipt** to forward to the customer: what they bought, the amount paid, the balance still owing and the due date (or **PAID IN FULL**). Every number comes from the ledger |
 | "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
 | 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
 
@@ -211,7 +212,7 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 
 1. **The problem (20s).** A trader's notebook and a phone full of "I go pay you Friday" chats. "Lagos traders lose money to forgotten credit every week."
 2. **Log by voice (40s).** Record a Pidgin voice note: *"Mama Bisi collect 3 bags rice, she go pay 45k Friday."* The receipt arrives with the transcript, amount and due date. Tap **Correct ✓**.
-3. **Part-payment (25s).** Voice: *"Tutu collect three charger, 45k. He give me 20k, he go balance Saturday."* One receipt: ₦45,000 total, ₦20,000 paid, ₦25,000 owing.
+3. **Part-payment (25s).** Voice: *"Tutu collect three charger, 45k. He give me 20k, he go balance Saturday."* One receipt: ₦45,000 total, ₦20,000 paid, ₦25,000 owing. Say *"send me receipt"* and a picture receipt arrives, ready to forward to Tutu.
 4. **Fix a mistake (20s).** Tap **Fix it ✏️** on a receipt and say *"no, na 4 bags, 60k."* A corrected receipt comes back.
 5. **Ask (25s).** *"Who owe me money?"* gives the list with ⚠️ overdue flags. *"How much I sell this week?"* gives the totals.
 6. **Reminders (35s).** Say *"Mama Bisi number na 0803 123 4567"*. Trigger the morning job: "3 customers have debts due or overdue", then a polite message per customer. Tap **Send to Mama Bisi** and WhatsApp opens her chat with the reminder already typed. Forward the others with a long-press.
@@ -229,6 +230,7 @@ owobook/
   llm/                 Meta Model API, Baseten and fake providers (OpenAI-compatible tool calling)
   transcribe/          Muse Voice Transcribe client, ffmpeg → WAV
   vision.py            receipt / debt-book photos → lines, with Muse Spark vision
+  receipt.py           picture receipts for customers (Pillow, bundled DejaVu font for ₦ and tone marks)
   whatsapp/            Cloud API client, webhook parsing + signature check, receipt formatting,
                        i18n.py: every fixed text in English, Pidgin, Yorùbá, Hausa and Igbo
   ledger.py            business logic: sales, payments, balances, summaries
@@ -238,7 +240,7 @@ owobook/
   prompts/             the Muse Spark system prompt and the photo-reading prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
 evals/                 42 labelled Pidgin/English cases + runner
-tests/                 247 tests (money, dates, ledger, agent, photos, webhook, reminders, usage)
+tests/                 261 tests (money, dates, ledger, agent, photos, receipts, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

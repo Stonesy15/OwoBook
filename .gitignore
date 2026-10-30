@@ -17,8 +17,9 @@ dist/
 *.db-journal
 *.sqlite3
 
-# Media downloaded during dev
+# Media downloaded during dev, receipts saved by the simulator
 media/
+receipts/
 
 # OS / editors
 .DS_Store

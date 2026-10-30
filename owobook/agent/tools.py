@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
-from owobook import ledger
+from owobook import ledger, receipt
 from owobook.dates import PERIODS, format_date, resolve_due_date
 from owobook.models import Trader
 from owobook.money import format_naira, line_total_kobo, naira_to_kobo, parse_amount
@@ -141,6 +141,16 @@ class SaveCustomerPhone(ToolArgs):
     new_customer: bool = Field(False, description="true only if the trader confirmed this is a NEW customer.")
 
 
+class MakeReceipt(ToolArgs):
+    """Make a picture receipt the trader can forward to a customer ("send me receipt", "receipt for Mama Bisi",
+    "give am receipt"). It shows what was bought or paid, the amount paid, the balance still owing and the due
+    date. Uses the customer's latest sale or payment unless entry_id is given. If the same message also records a
+    sale or payment, call that tool FIRST, then this one."""
+
+    customer_name: str | None = Field(None, description="Whose receipt. Leave out for the latest sale/payment.")
+    entry_id: int | None = Field(None, description="A specific entry from RECENT_ENTRIES, if the trader means one.")
+
+
 TOOL_MODELS: dict[str, type[BaseModel]] = {
     "record_sale": RecordSale,
     "record_payment": RecordPayment,
@@ -153,6 +163,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "ask_clarification": AskClarification,
     "save_profile": SaveProfile,
     "save_customer_phone": SaveCustomerPhone,
+    "make_receipt": MakeReceipt,
 }
 
 
@@ -482,6 +493,25 @@ def _save_customer_phone(ctx: AgentContext, a: SaveCustomerPhone) -> ToolResult:
     return ToolResult(data={"ok": True, "customer": customer.display_name, "phone": customer.phone}, reply=Reply(text))
 
 
+def _make_receipt(ctx: AgentContext, a: MakeReceipt) -> ToolResult:
+    if a.entry_id is not None:
+        entry = ledger.get_entry(ctx.db, ctx.trader, a.entry_id)
+    else:
+        customer = ledger.resolve_customer(ctx.db, ctx.trader, a.customer_name, create=False) if a.customer_name else None
+        entry = ledger.latest_receipt_entry(ctx.db, ctx.trader, customer)
+    if entry is None or entry.status == "deleted" or entry.type not in ledger.RECEIPT_TYPES:
+        return ToolResult(data={"error": "nothing to make a receipt for"}, reply=Reply(fmt.t(ctx.lang, "receipt_none")),
+                          ends_turn=True)
+    info = receipt.build_receipt(ctx.db, ctx.trader, entry)
+    caption = fmt.t(ctx.lang, "receipt_caption", name=info.customer or "your customer")
+    return ToolResult(
+        data={"ok": True, "receipt_no": info.number, "entry_id": entry.id, "customer": info.customer,
+              "balance_owing": format_naira(info.balance_kobo), "sent_as": "picture"},
+        reply=Reply(caption, image=receipt.render_png(info, ctx.lang)),
+        entry_id=entry.id,
+    )
+
+
 _HANDLERS = {
     "record_sale": _record_sale,
     "record_payment": _record_payment,
@@ -494,6 +524,7 @@ _HANDLERS = {
     "ask_clarification": _ask_clarification,
     "save_profile": _save_profile,
     "save_customer_phone": _save_customer_phone,
+    "make_receipt": _make_receipt,
 }
 
 

@@ -18,9 +18,11 @@ import asyncio
 import logging
 import shlex
 import sys
+from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import func, select  # noqa: E402
 
@@ -154,6 +156,11 @@ async def main() -> None:
         buttons = []
         for reply in replies:
             print(f"\n{GREEN}OwoBook:{RESET}\n{render_plain(reply)}")
+            if reply.image:  # a picture receipt: save it so you can open it
+                out = ROOT / "receipts" / f"receipt-{datetime.now():%H%M%S}.png"
+                out.parent.mkdir(exist_ok=True)
+                out.write_bytes(reply.image)
+                print(f"{DIM}  (picture saved: {out}){RESET}")
             if reply.buttons:
                 buttons = reply.buttons
 

@@ -141,6 +141,22 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - With `LLM_PROVIDER=meta` and Baseten configured, a failed vision call falls back to Muse Spark Open on Baseten. It's untested whether that model accepts images; if not, the trader gets "please try again".
 - Tested live on 29 Oct with generated images: a printed receipt → one part-paid sale (₦54,000, ₦20,000 paid, due Friday); a handwritten debt-book page → 2 sales, 1 payment, and a question about the `???` amount. Cost ≈ $0.011 and ≈ $0.026.
 
+## Picture receipts (30 Oct 2026)
+
+- "Send me receipt (for X)" → `make_receipt` tool → a PNG drawn by `owobook/receipt.py` from one ledger entry
+  (the customer's latest sale or payment unless the model passes `entry_id`). Every number comes from the DB.
+- Sale: item, total, amount paid, balance on this sale, due date, plus "Total balance owing" when the customer
+  owes for other things too. Payment: balance before, amount paid, what's left and the next due date. Nothing
+  left → a green PAID IN FULL box. Balances are **as of that entry** (`customer_balance(upto_entry_id=…)`), so
+  an old receipt doesn't change when later payments come in.
+- WhatsApp (docs checked 30 Oct 2026): `POST /{phone_number_id}/media` multipart (`messaging_product`, `type`,
+  `file`) → `{"id"}`, valid 30 days; then `{"type": "image", "image": {"id", "caption"}}`, caption ≤ 1024.
+  PNG/JPEG, 8-bit RGB(A), ≤ 5 MB (ours are ~50–60 KB).
+- Font: DejaVu Sans (bundled in `owobook/assets/fonts`, its free license alongside), because it has ₦ and the
+  Yorùbá/Hausa/Igbo letters (ẹ ọ ṣ ɗ ƙ ɓ ụ ị). Labels follow the trader's language; dates stay English.
+- OwoBook still never messages customers: the trader forwards the picture from their own WhatsApp.
+- Payment receipts and part-paid sale receipts end with a hint: say "receipt" for a picture receipt.
+
 ## Reply languages (29 Oct 2026)
 - Hosea's call: replies are in the trader's **chosen** language, default English, no longer mirrored from the message (a Pidgin voice note gets English). `traders.language_pref` already existed; `auto` (the old default) now means English, so no migration.
 - Choices: english, pidgin, yoruba, hausa, igbo. The trader switches by asking ("reply me in Yoruba"), which calls `save_profile(language_pref=...)`. The confirmation is sent in the new language.

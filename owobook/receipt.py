@@ -32,7 +32,6 @@ class ReceiptInfo:
     number: str  # "OB-00012"
     issued_at: datetime  # Lagos time
     shop: str
-    owner: str | None
     customer: str | None
     rows: list[tuple[str, str]] = field(default_factory=list)  # (label key, value) above the balance box
     balance_kobo: int = 0  # what's still owing after this receipt (this sale, or the account for payments)
@@ -51,7 +50,6 @@ def build_receipt(db: Session, trader: Trader, entry: Entry) -> ReceiptInfo:
         number=f"OB-{entry.id:05d}",
         issued_at=to_local(entry.created_at),
         shop=trader.shop_name or trader.name or "OwoBook",
-        owner=trader.name if trader.shop_name and trader.name else None,
         customer=customer.display_name if customer else None,
     )
     if entry.type == EntryType.PAYMENT:
@@ -107,17 +105,15 @@ def _draw(img: Image.Image, info: ReceiptInfo, lang: Lang) -> int:
     inner = WIDTH - 2 * PAD
     t = lambda key: fmt.t(lang, key)  # noqa: E731
 
-    # Header band: shop name (and owner).
-    shop_font, owner_font = _font(40, True), _font(24)
+    # Header band: shop name.
+    shop_font = _font(40, True)
     shop_lines = _wrap(d, info.shop.upper(), shop_font, inner)
-    band = 40 + 50 * len(shop_lines) + (34 if info.owner else 0) + 24
+    band = 40 + 50 * len(shop_lines) + 24
     d.rectangle([0, 0, WIDTH, band], fill=BRAND)
     y = 40
     for line in shop_lines:
         d.text((WIDTH / 2, y), line, font=shop_font, fill=BRAND_TEXT, anchor="mt")
         y += 50
-    if info.owner:
-        d.text((WIDTH / 2, y), info.owner, font=owner_font, fill=BRAND_TEXT, anchor="mt")
     y = band + 36
 
     title = t("rc_payment" if info.kind == "payment" else "rc_sale")
@@ -178,7 +174,7 @@ def _draw(img: Image.Image, info: ReceiptInfo, lang: Lang) -> int:
         d.text((WIDTH / 2, y), line, font=_font(26), fill=INK, anchor="mt")
         y += 36
     y += 14
-    d.text((WIDTH / 2, y), "Made with OwoBook", font=_font(20), fill=MUTED, anchor="mt")
+    d.text((WIDTH / 2, y), "Made with Meta", font=_font(20), fill=MUTED, anchor="mt")
     return y + 48
 
 

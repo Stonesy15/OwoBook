@@ -165,3 +165,46 @@ Decisions and findings that aren't obvious from the code. API findings get added
 - **Voice notes in Yorùbá, Hausa or Igbo aren't supported:** Muse Voice Transcribe (dev.meta.ai/docs/speech-to-text, checked 29 Oct) lists 25 languages, none of them Nigerian. Pidgin works because it's English-based. The language-switch confirmation and onboarding say to speak English or Pidgin in voice notes. Text in those languages works: Muse Spark understood Yorùbá and Hausa sales and payments in a live test.
 - Date words are only parsed in English/Pidgin, so the system prompt tells the model to translate "ọ̀la", "gobe", "echi" etc. first. Before that, "lola" cost one extra model call.
 
+## Global: currency, auto language, trust score, business record (30 Oct 2026)
+
+**Muse Voice Transcribe languages** (docs checked 30 Oct 2026): Arabic, Bengali, Dutch, English, French, German,
+Hebrew, Hindi, Indonesian, Italian, Japanese, Kannada, Korean, Malay, Mandarin, Marathi, Polish, Portuguese,
+Spanish, Tagalog, Tamil, Telugu, Thai, Turkish, Vietnamese. **No Swahili** (nor Yorùbá, Hausa, Igbo). The response
+has **no detected-language field**; `languageBias` is a hint and omitting it lets the model detect the language.
+- We picked Portuguese (Brazil) for the demo, and added French (CFA franc zones) and Hindi (India).
+- Live test: a pt-BR voice note sent with the old fixed `languageBias: ["English"]` + Pidgin keywords came back as
+  English nonsense ("…semovita four thousand"). So the bias now follows the trader: chosen language first, else
+  the phone country's (+55 Portuguese, +225 French, +91 Hindi + English); Pidgin keywords only for +234; unknown
+  countries get no bias. After the fix the same note transcribed correctly.
+
+**Currency** (`currency.py`): from the WhatsApp number's calling code (longest prefix): NGN, GHS, KES, UGX, TZS, RWF,
+ZAR, XOF/XAF, INR, BRL, AOA, MZN, MXN, PHP, USD, GBP; unknown → plain numbers. Stored on `traders.currency`
+(migration `5b1f0c2a9d17`, existing traders NGN). The trader can change it ("my currency is reais" →
+`save_profile.currency`). Formatting follows the trader being served via a context variable set per message and
+per trader in the reminder job: `₦45,000`, `KSh 45,000`, `₹45,000`, `R$ 45.000`, `45 000 FCFA`. Amounts stay
+integer minor units (the `*_kobo` names are historical). Parsing adds "lakh/crore", French "mille", and
+"mil" = thousand for BRL/AOA/MZN/MXN traders (still "million" elsewhere). Tool fields renamed `amount_naira` →
+`amount` (etc.); the old names still validate. Local customer numbers get the trader's own country code.
+
+**Auto language** (`language.py`): only while `language_pref` is "auto" (never chosen). Devanagari → Hindi;
+otherwise ≥ 2 marker words only Portuguese/French/Hinglish speakers use (or a lone "Olá"/"Bonjour"). English and
+Pidgin → None, so Hosea's earlier decision (Pidgin voice note → English reply) still holds. Once detected, the
+language is saved. Date words in pt/fr/hi (and ọ̀la/gobe/echi) are translated in `dates.py`. Dates are still
+displayed in English ("Fri, 6 Nov"). Receipt buttons are translated (≤ 20 chars).
+- Hindi in pictures/PDFs: Pillow here has no libraqm and fpdf2 no shaping, so Devanagari can't be drawn. Hindi
+  traders get English labels on receipts/PDFs, the model is told to pass names in Latin letters, and
+  `script.py` spells any remaining Devanagari in Latin ("रमेश" → "Ramesh"). Chat messages stay in Hindi.
+
+**Trust score** (`ledger.payment_record`): replays a customer's credit sales and payments in order, paying off the
+oldest debt first. A paid-off sale with a due date is on time (paid on/before the due date, Lagos dates) or late;
+an unpaid one past its due date is overdue. New credit sales get a heads-up when there's anything overdue, or
+≥ 2 late (or more late than on time); ≥ 3 on time and none late gets a 👍. `get_customer_balance` shows the
+record. Facts only — no "don't give credit" advice.
+
+**Business record** (`business_record.py`, fpdf2, A4 text PDF, English labels, trader's currency): trader
+details, totals for 30/60/90 days (cash vs credit sales, money collected, expenses, sales minus expenses, active
+days, average per trading day), credit owed now, % of customer debts paid by the due date (late + still overdue
+count against), week-by-week table, every transaction (latest 300), and a plain note that figures are
+self-reported and not audited. Sent as a WhatsApp document: `{"type": "document", "document": {"id",
+"filename", "caption"}}`, PDF ≤ 100 MB (docs checked 30 Oct 2026).
+

@@ -156,11 +156,12 @@ async def main() -> None:
         buttons = []
         for reply in replies:
             print(f"\n{GREEN}OwoBook:{RESET}\n{render_plain(reply)}")
-            if reply.image:  # a picture receipt: save it so you can open it
-                out = ROOT / "receipts" / f"receipt-{datetime.now():%H%M%S}.png"
+            if reply.image or reply.document:  # a picture receipt / PDF: save it so you can open it
+                name = reply.filename or f"receipt-{datetime.now():%H%M%S}.png"
+                out = ROOT / "receipts" / name
                 out.parent.mkdir(exist_ok=True)
-                out.write_bytes(reply.image)
-                print(f"{DIM}  (picture saved: {out}){RESET}")
+                out.write_bytes(reply.image or reply.document)
+                print(f"{DIM}  (saved: {out}){RESET}")
             if reply.buttons:
                 buttons = reply.buttons
 

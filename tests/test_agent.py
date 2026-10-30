@@ -66,7 +66,7 @@ async def test_unit_price_is_multiplied_in_code(db):
     await onboard(db)
     provider = FakeProvider(script=[call(
         "record_sale", customer_name="Chidi", quantity=3, unit="bags", item_description="rice",
-        unit_price_naira="15k", paid=False,
+        unit_price="15k", paid=False,
     )])
     replies = await say(db, "Chidi collect 3 bags rice at 15k each", provider)
     assert "₦45,000" in replies[0].text
@@ -75,7 +75,7 @@ async def test_unit_price_is_multiplied_in_code(db):
 
 async def test_receipt_numbers_come_from_db_not_model(db):
     await onboard(db)
-    resp = call("record_sale", customer_name="Ada", amount_naira=5000, paid=False)
+    resp = call("record_sale", customer_name="Ada", amount=5000, paid=False)
     resp.content = "Ada now owes you ₦999,999"  # a hallucinating model
     replies = await say(db, "Ada collect 5k", FakeProvider(script=[resp]))
     assert len(replies) == 1
@@ -156,8 +156,8 @@ class ExplodingProvider(FakeProvider):
 
     def __init__(self):
         super().__init__(script=[LLMResponse(content=None, tool_calls=[
-            ToolCall("a", "record_sale", {"customer_name": "Ada", "amount_naira": 5000, "paid": False}),
-            ToolCall("b", "record_payment", {"customer_name": "Nobody", "amount_naira": 100}),
+            ToolCall("a", "record_sale", {"customer_name": "Ada", "amount": 5000, "paid": False}),
+            ToolCall("b", "record_payment", {"customer_name": "Nobody", "amount": 100}),
         ])])
 
     async def chat(self, messages, tools=None, tool_choice="auto"):
@@ -184,17 +184,17 @@ async def test_usage_is_logged(db):
     "text, tool, expected",
     [
         ("Mama Bisi collect 3 bags rice, she go pay 45k Friday", "record_sale",
-         {"customer_name": "Mama Bisi", "paid": False, "amount_naira": "45k", "due_date": "Friday", "quantity": 3.0}),
-        ("Sold 5 crates of eggs 12k cash", "record_sale", {"paid": True, "amount_naira": "12k"}),
+         {"customer_name": "Mama Bisi", "paid": False, "amount": "45k", "due_date": "Friday", "quantity": 3.0}),
+        ("Sold 5 crates of eggs 12k cash", "record_sale", {"paid": True, "amount": "12k"}),
         ("Chidi carry 2 cartons indomie at 6500 each, he go pay tomorrow", "record_sale",
-         {"customer_name": "Chidi", "unit_price_naira": "6500", "quantity": 2.0}),
-        ("Mama Bisi don pay 20k", "record_payment", {"customer_name": "Mama Bisi", "amount_naira": "20k"}),
+         {"customer_name": "Chidi", "unit_price": "6500", "quantity": 2.0}),
+        ("Mama Bisi don pay 20k", "record_payment", {"customer_name": "Mama Bisi", "amount": "20k"}),
         ("Who owe me money?", "list_debtors", {"overdue_only": False}),
         ("Who never pay wey don pass due date", "list_debtors", {"overdue_only": True}),
         ("How much I sell this week?", "get_sales_summary", {"period": "this_week"}),
         ("How much I sell today", "get_sales_summary", {"period": "today"}),
         ("How much Mama Bisi owe?", "get_customer_balance", {"customer_name": "mama bisi"}),
-        ("I spend 2k for transport", "record_expense", {"amount_naira": "2k"}),
+        ("I spend 2k for transport", "record_expense", {"amount": "2k"}),
         ("my name is Hosea", "save_profile", {"name": "Hosea"}),
     ],
 )
@@ -212,15 +212,15 @@ async def test_fake_provider_rules(text, tool, expected):
 
 
 @pytest.mark.parametrize("args, total, paid_now", [
-    ({"amount_paid_naira": "60k", "balance_naira": "70k"}, 130_000, 60_000),   # paid + balance
-    ({"amount_naira": "50k", "amount_paid_naira": "20k"}, 50_000, 20_000),    # total + paid
-    ({"amount_naira": "50k", "balance_naira": "30k"}, 50_000, 20_000),        # total + balance
-    ({"quantity": 3, "unit_price_naira": "10k", "amount_paid_naira": "10k"}, 30_000, 10_000),
+    ({"amount_paid": "60k", "balance": "70k"}, 130_000, 60_000),   # paid + balance
+    ({"amount": "50k", "amount_paid": "20k"}, 50_000, 20_000),    # total + paid
+    ({"amount": "50k", "balance": "30k"}, 50_000, 20_000),        # total + balance
+    ({"quantity": 3, "unit_price": "10k", "amount_paid": "10k"}, 30_000, 10_000),
 ])
 def test_sale_amounts_computed_in_code(args, total, paid_now):
     from owobook.agent.tools import sale_amounts
-    got = sale_amounts(args.get("amount_naira"), args.get("unit_price_naira"), args.get("quantity"),
-                       args.get("amount_paid_naira"), args.get("balance_naira"))
+    got = sale_amounts(args.get("amount"), args.get("unit_price"), args.get("quantity"),
+                       args.get("amount_paid"), args.get("balance"))
     assert got == (total * 100, paid_now * 100)
 
 
@@ -234,7 +234,7 @@ async def test_part_paid_sale_gives_one_receipt(db):
     await onboard(db)
     provider = FakeProvider(script=[call(
         "record_sale", customer_name="Iro", item_description="rice", quantity=3, unit="bags",
-        amount_paid_naira="60k", balance_naira="70k", paid=False, due_date="2026-10-30",
+        amount_paid="60k", balance="70k", paid=False, due_date="2026-10-30",
     )])
     replies = await say(db, "Iro buy 3 bags rice, e give me 60k, e go balance me 70k Friday", provider)
     [receipt] = replies
@@ -250,13 +250,13 @@ def test_null_strings_from_the_model_are_ignored(db):
     trader, _ = ledger.get_or_create_trader(db, WA)
     ctx = AgentContext(db=db, trader=trader, lang="english", today=today_local())
     result = execute_tool(ctx, "record_sale", {
-        "customer_name": "Chidi", "quantity": 2, "unit_price_naira": 6500, "amount_naira": "null",
-        "amount_paid_naira": "null", "balance_naira": "None", "due_date": "null", "paid": False,
+        "customer_name": "Chidi", "quantity": 2, "unit_price": 6500, "amount": "null",
+        "amount_paid": "null", "balance": "None", "due_date": "null", "paid": False,
     })
     assert not result.is_error, result.data
     assert result.data["amount"] == "₦13,000" and result.data["due_date"] is None
 
-    result = execute_tool(ctx, "record_sale", {"customer_name": "null", "amount_naira": "5k", "paid": False})
+    result = execute_tool(ctx, "record_sale", {"customer_name": "null", "amount": "5k", "paid": False})
     assert result.is_error  # credit sale with no customer → ask who, never a customer called "Null"
 
 

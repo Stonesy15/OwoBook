@@ -20,12 +20,13 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from owobook import currency
 from owobook import ledger
 from owobook.config import Settings
 from owobook.dates import format_date, period_bounds, today_local, utcnow
 from owobook.ledger import Debtor
 from owobook.models import MessageLog, Trader
-from owobook.money import format_naira
+from owobook.money import format_money
 from owobook.whatsapp import formatting as fmt
 from owobook.whatsapp.formatting import Lang, Reply
 
@@ -50,7 +51,7 @@ def _items_for(db: Session, trader: Trader, debtor: Debtor) -> str | None:
 
 def customer_draft(db: Session, trader: Trader, debtor: Debtor, lang: Lang, today: date) -> str:
     """A polite reminder the trader can forward to their customer as-is."""
-    name, amount = debtor.customer.display_name, format_naira(debtor.balance_kobo)
+    name, amount = debtor.customer.display_name, format_money(debtor.balance_kobo)
     items = _items_for(db, trader, debtor)
     seller = trader.shop_name or trader.name
     when = format_date(debtor.next_due, today) if debtor.next_due else None
@@ -66,16 +67,16 @@ def customer_draft(db: Session, trader: Trader, debtor: Debtor, lang: Lang, toda
 def _heads_up(debtors: list[Debtor], lang: Lang, today: date) -> str:
     if len(debtors) == 1:
         d = debtors[0]
-        name, amount = d.customer.display_name, format_naira(d.balance_kobo)
+        name, amount = d.customer.display_name, format_money(d.balance_kobo)
         if d.due_today:
             return fmt.t(lang, "r_one_today", name=name, amount=amount)
         return fmt.t(lang, "r_one_overdue", name=name, amount=amount, date=format_date(d.next_due, today))
 
-    total = format_naira(sum(d.balance_kobo for d in debtors))
+    total = format_money(sum(d.balance_kobo for d in debtors))
     lines = [fmt.t(lang, "r_many", count=len(debtors), total=total), ""]
     for d in debtors:
         tag = fmt.t(lang, "r_tag_today") if d.due_today else fmt.t(lang, "r_tag_since", date=format_date(d.next_due, today))
-        lines.append(f"• {d.customer.display_name} — {format_naira(d.balance_kobo)} · {tag}")
+        lines.append(f"• {d.customer.display_name} — {format_money(d.balance_kobo)} · {tag}")
     return "\n".join(lines)
 
 
@@ -171,6 +172,7 @@ async def run_reminders(
         try:
             with session_factory() as db:
                 trader = db.get(Trader, trader_id)
+                currency.set_current(trader.currency)
                 debtors = debtors_due(db, trader, today)
                 if not debtors:
                     continue
@@ -189,7 +191,7 @@ async def run_reminders(
                         _log(db, trader, reply.text)
                     results.append(ReminderResult(wa_id, "sent", len(debtors), replies))
                 elif settings.wa_reminder_template:
-                    total = format_naira(sum(d.balance_kobo for d in debtors))
+                    total = format_money(sum(d.balance_kobo for d in debtors))
                     params = [trader.name or "there", str(len(debtors)), total]
                     await whatsapp.send_template(
                         wa_id, settings.wa_reminder_template, settings.wa_reminder_template_lang, params

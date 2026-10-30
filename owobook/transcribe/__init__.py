@@ -18,14 +18,15 @@ class Transcriber(Protocol):
     name: str
     model: str
 
-    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None) -> Transcript: ...
+    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None,
+                         languages: list[str] | None = None) -> Transcript: ...
 
 
 class TranscriptionError(Exception):
     pass
 
 
-# Words to bias recognition toward (Pidgin + money talk). Customer names are added per trader.
+# Words to bias recognition toward (Pidgin + money talk), for Nigerian traders. Customer names are added per trader.
 BASE_KEYWORDS = [
     "naira", "kobo", "k", "thousand", "collect", "carry", "don pay", "go pay", "dey owe", "balance",
     "next tomorrow", "abeg", "wetin", "oga", "Mama", "Iya", "Baba", "Alhaji", "Madam",

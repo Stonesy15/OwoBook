@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from owobook import ledger
+from owobook import currency, ledger
 from owobook.agent.tools import TOOL_SPECS, AgentContext, ToolResult, describe_entry, execute_tool
 from owobook.dates import format_date, utcnow
 from owobook.llm.base import LLMProvider
@@ -31,10 +31,12 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent / "prompts" / "system.md
 def build_context(ctx: AgentContext) -> str:
     """Per-message facts for the model: who the trader is, today's date, customers, recent entries."""
     db, trader, today = ctx.db, ctx.trader, ctx.today
+    cur = currency.get(trader.currency)
     lines = [
         f"TODAY: {format_date(today, today)} {today.year} ({today.isoformat()}), Africa/Lagos",
         f"TRADER: name={trader.name or 'unknown'}; shop={trader.shop_name or 'unknown'}",
         f"REPLY_LANGUAGE: {ctx.lang}",
+        f"CURRENCY: {cur.code} ({cur.symbol or 'no symbol'}) — every amount the trader says is in this currency",
     ]
     if not trader.name:
         lines.append("NOTE: We don't know the trader's name yet. If they say it, call save_profile.")

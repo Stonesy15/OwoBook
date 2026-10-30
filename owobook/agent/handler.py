@@ -13,13 +13,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from owobook import ledger
+from owobook import currency, ledger
 from owobook.agent.loop import recent_history, run_agent
 from owobook.agent.tools import AgentContext
 from owobook.dates import today_local, utcnow
+from owobook.currency import calling_code
+from owobook.language import detect_language, voice_languages
 from owobook.llm.base import LLMProvider
 from owobook.models import MessageLog, Trader
-from owobook.transcribe import Transcriber
+from owobook.transcribe import BASE_KEYWORDS, Transcriber
 from owobook.usage import VISION_TAG, log_usage
 from owobook.vision import PHOTO_MARKER, read_photo
 from owobook.whatsapp import formatting as fmt
@@ -106,6 +108,7 @@ async def handle_message(
         return []
 
     trader, _ = ledger.get_or_create_trader(db, wa_id)
+    currency.set_current(trader.currency)
     trader.last_inbound_at = now or utcnow()
     content = text if not button_id else f"[button] {button_id}"
     try:
@@ -115,6 +118,8 @@ async def handle_message(
         log.info("duplicate message %s ignored (race)", wa_message_id)
         return []
 
+    if not button_id and trader.language_pref in (None, "", "auto") and (detected := detect_language(text)):
+        trader.language_pref = detected  # a Portuguese voice note → Portuguese replies from now on
     lang = fmt.reply_language(trader.language_pref)
     try:
         if button_id:
@@ -155,11 +160,16 @@ async def handle_voice_note(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
+    currency.set_current(trader.currency)
     lang = fmt.reply_language(trader.language_pref)
     keywords = [c.display_name for c in ledger.list_customers(db, trader)][:60]
     keywords += [x for x in (trader.name, trader.shop_name) if x]
+    code = calling_code(trader.wa_id)
+    if code == "234":
+        keywords += BASE_KEYWORDS  # Pidgin and Nigerian market words
+    languages = voice_languages(trader.language_pref, code)
     try:
-        transcript = await transcriber.transcribe(audio, keywords=keywords)
+        transcript = await transcriber.transcribe(audio, keywords=keywords, languages=languages)
     except Exception:
         log.exception("transcription failed for trader %s", trader.id)
         return [Reply(fmt.t(lang, "error"))]
@@ -194,6 +204,7 @@ async def handle_photo(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
+    currency.set_current(trader.currency)
     lang = fmt.reply_language(trader.language_pref)
     try:
         reading = await read_photo(provider, image, mime_type, caption=caption,
@@ -230,6 +241,7 @@ async def handle_unsupported(
     if already_seen(db, wa_message_id):
         return []
     trader, _ = ledger.get_or_create_trader(db, wa_id)
+    currency.set_current(trader.currency)
     trader.last_inbound_at = now or utcnow()
     lang = fmt.reply_language(trader.language_pref)
     try:

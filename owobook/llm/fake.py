@@ -128,7 +128,7 @@ class FakeProvider:
         if editing:
             args: dict[str, Any] = {"entry_id": int(editing[1])}
             if amounts:
-                args["amount_naira"] = amounts[-1][2]
+                args["amount"] = amounts[-1][2]
             if qty:
                 args["quantity"] = float(qty[1])
                 args["unit"] = qty[2]
@@ -152,6 +152,11 @@ class FakeProvider:
                 return self._call("ask_clarification", question="Na whose number be this?")
             return self._call("save_customer_phone", customer_name=name, phone=phone_m[1].strip())
 
+        # Business record PDF: "send me my business record", "statement for 90 days"
+        if re.search(r"\b(business record|statement|records? for (?:a |my )?loan)\b", low):
+            days = re.search(r"\b(30|60|90)\b", low)
+            return self._call("business_record", days=int(days[1]) if days else None)
+
         # Picture receipt: "send me receipt", "receipt for Mama Bisi", "give Tunde receipt"
         if re.search(r"\b(receipt|rìsíìtì|risiti|rasit|risiit)\b", low) and not amounts:
             name = _known_customer_in(text, known)
@@ -160,7 +165,7 @@ class FakeProvider:
             return self._call("make_receipt", customer_name=name)
 
         # Reply language: "reply me in Yoruba", "speak Hausa", "change language to Igbo"
-        if lang_m := re.search(r"\b(?:reply|answer|talk|speak|yarn|respond|language)\b.*?\b(english|pidgin|yoruba|yorùbá|hausa|igbo)\b", low):
+        if lang_m := re.search(r"\b(?:reply|answer|talk|speak|yarn|respond|language)\b.*?\b(english|pidgin|yoruba|yorùbá|hausa|igbo|portuguese|french|hindi)\b", low):
             return self._call("save_profile", language_pref=lang_m[1].replace("yorùbá", "yoruba"))
 
         # Profile: "my name is Hosea, my shop is Hosea Provisions"
@@ -201,7 +206,7 @@ class FakeProvider:
             start, end, amt = amounts[0]
             desc = re.sub(r"\b(i|spend|spent|expense|paid|pay|for|on|today|abeg)\b", " ", (text[:start] + text[end:]).lower())
             desc = re.sub(r"\s+", " ", desc).strip(" ,.") or "expense"
-            return self._call("record_expense", description=desc, amount_naira=amt)
+            return self._call("record_expense", description=desc, amount=amt)
 
         # Payment: "Mama Bisi don pay 20k"
         pay = re.search(r"^(.*?)\s*\b(?:don pay|has paid|have paid|paid|pay me|don settle|settled|bring|brought|sent|send)\b", text, re.I)
@@ -211,7 +216,7 @@ class FakeProvider:
                 return self._call("ask_clarification", question="How much dem pay?")
             if not name:
                 return self._call("ask_clarification", question="Who pay the money?")
-            return self._call("record_payment", customer_name=name, amount_naira=amounts[0][2])
+            return self._call("record_payment", customer_name=name, amount=amounts[0][2])
 
         # Sale
         if amounts or qty:
@@ -243,9 +248,9 @@ class FakeProvider:
             start, end, amt = amounts[0]
             after = low[end:end + 15]
             if qty and re.match(r"\s*(each|per|a |one)", after):
-                args["unit_price_naira"] = amt
+                args["unit_price"] = amt
             else:
-                args["amount_naira"] = amt
+                args["amount"] = amt
             return self._call("record_sale", **args)
 
         if _CREDIT_CUES.search(low):  # "Tunde collect rice" — a sale with no amount

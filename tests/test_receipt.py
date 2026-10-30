@@ -19,7 +19,7 @@ from tests.test_agent import WA, call, onboard, say
 from tests.test_webhook import GRAPH, TRADER, settings
 
 PART_PAID = {"customer_name": "Mama Bisi", "item_description": "rice", "quantity": 3, "unit": "bags",
-             "amount_naira": 45000, "paid": False, "amount_paid_naira": 20000, "due_date": "2026-11-06"}
+             "amount": 45000, "paid": False, "amount_paid": 20000, "due_date": "2026-11-06"}
 
 
 def png(reply: Reply) -> Image.Image:
@@ -98,7 +98,7 @@ async def test_cash_sale_receipt_is_paid_in_full(db):
 async def test_record_and_receipt_in_one_message(db):
     await onboard(db)
     both = LLMResponse(content=None, tool_calls=[
-        ToolCall("c1", "record_payment", {"customer_name": "Mama Bisi", "amount_naira": 5000, "new_customer": True}),
+        ToolCall("c1", "record_payment", {"customer_name": "Mama Bisi", "amount": 5000, "new_customer": True}),
         ToolCall("c2", "make_receipt", {"customer_name": "Mama Bisi"}),
     ])
     replies = await say(db, "Mama Bisi pay 5k, send her receipt", FakeProvider(script=[both]))

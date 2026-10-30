@@ -112,10 +112,23 @@ class WhatsAppClient:
             payload["caption"] = caption[:MAX_BUTTON_BODY]
         return await self._post_message({"recipient_type": "individual", "to": to, "type": "image", "image": payload})
 
+    async def send_document(self, to: str, data: bytes, filename: str, caption: str = "",
+                            mime_type: str = "application/pdf") -> str | None:
+        """A file the trader can open and pass on (the business-record PDF). Docs: PDF ≤ 100 MB, caption ≤ 1024."""
+        media_id = await self.upload_media(data, mime_type, filename)
+        payload: dict[str, Any] = {"id": media_id, "filename": filename}
+        if caption:
+            payload["caption"] = caption[:MAX_BUTTON_BODY]
+        return await self._post_message({"recipient_type": "individual", "to": to, "type": "document",
+                                         "document": payload})
+
     async def send_reply(self, to: str, reply: Reply) -> None:
         """Send one OwoBook reply: plain text, text with reply buttons, text with a link button, or a picture."""
         if reply.image:
             await self.send_image(to, reply.image, reply.text)
+            return
+        if reply.document:
+            await self.send_document(to, reply.document, reply.filename or "document.pdf", reply.text)
             return
         if reply.link:
             if len(reply.text) <= MAX_BUTTON_BODY:

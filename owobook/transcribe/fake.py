@@ -11,7 +11,10 @@ class FakeTranscriber:
         self.text = text
         self.seconds = seconds
         self.calls: list[list[str]] = []
+        self.languages: list[list[str] | None] = []
 
-    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None) -> Transcript:
+    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None,
+                         languages: list[str] | None = None) -> Transcript:
         self.calls.append(keywords or [])
+        self.languages.append(languages)
         return Transcript(text=self.text, audio_seconds=self.seconds, provider=self.name, model=self.model)

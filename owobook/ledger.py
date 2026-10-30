@@ -13,7 +13,8 @@ from difflib import SequenceMatcher
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from owobook.dates import period_bounds, today_local, utcnow
+from owobook.currency import calling_code, currency_for_wa_id
+from owobook.dates import period_bounds, to_local, today_local, utcnow
 from owobook.models import (
     Customer,
     Entry,
@@ -74,7 +75,7 @@ def get_or_create_trader(db: Session, wa_id: str) -> tuple[Trader, bool]:
     trader = db.scalar(select(Trader).where(Trader.wa_id == wa_id))
     if trader:
         return trader, False
-    trader = Trader(wa_id=wa_id)
+    trader = Trader(wa_id=wa_id, currency=currency_for_wa_id(wa_id))
     db.add(trader)
     db.flush()
     return trader, True
@@ -151,9 +152,9 @@ def normalize_phone(text: str, default_country: str = "234") -> str | None:
     digits = re.sub(r"\D", "", text)
     if has_plus or digits.startswith(default_country):
         number = digits
-    elif digits.startswith("0") and len(digits) == 11:  # Nigerian local format
+    elif digits.startswith("0") and len(digits) in (10, 11):  # local format: 0803… (NG), 0712… (KE)
         number = default_country + digits[1:]
-    elif len(digits) == 10 and digits[0] in "789":  # local number without the 0
+    elif len(digits) == 10 and digits[0] in "6789":  # local number without the 0
         number = default_country + digits
     else:
         return None
@@ -163,8 +164,9 @@ def normalize_phone(text: str, default_country: str = "234") -> str | None:
 
 
 def set_customer_phone(db: Session, trader: Trader, customer: Customer, phone: str) -> Customer:
-    """Save a customer's WhatsApp number (normalized), for one-tap reminders."""
-    number = normalize_phone(phone)
+    """Save a customer's WhatsApp number (normalized), for one-tap reminders. Local numbers ("0712…")
+    get the trader's own country code."""
+    number = normalize_phone(phone, calling_code(trader.wa_id))
     if not number:
         raise LedgerError(f"Not a phone number: {phone!r}", question="That number no complete. Abeg send am again?")
     customer.phone = number
@@ -472,6 +474,63 @@ def outstanding_sales(db: Session, trader: Trader, customer: Customer) -> list[t
         if owed - covered > 0:
             out.append((sale, owed - covered))
     return out
+
+
+@dataclass
+class PaymentRecord:
+    """How a customer has paid their debts: each credit sale with a due date that's been paid off counts
+    as on time or late; one still unpaid after its due date counts as overdue."""
+
+    on_time: int = 0
+    late: int = 0
+    overdue: int = 0  # sales still unpaid after their due date
+    overdue_kobo: int = 0  # what's still owed on them
+    oldest_overdue: date | None = None
+
+    @property
+    def total(self) -> int:
+        """Debts paid off (on time or late)."""
+        return self.on_time + self.late
+
+
+def payment_record(db: Session, trader: Trader, customer: Customer, today: date | None = None,
+                   before_entry_id: int | None = None) -> PaymentRecord:
+    """Replay the customer's sales and payments in order, paying off the oldest debt first (FIFO).
+    `before_entry_id`: only look at history before that entry (e.g. the sale being recorded now)."""
+    today = today or today_local()
+    query = select(Entry).where(
+        Entry.trader_id == trader.id,
+        Entry.customer_id == customer.id,
+        Entry.status != EntryStatus.DELETED,
+        Entry.type.in_([EntryType.CREDIT_SALE, EntryType.PAYMENT]),
+    )
+    if before_entry_id is not None:
+        query = query.where(Entry.id < before_entry_id)
+    record, open_sales = PaymentRecord(), []  # [sale, still owed], oldest first
+    for e in db.scalars(query.order_by(Entry.created_at, Entry.id)):
+        if e.type == EntryType.CREDIT_SALE:
+            if e.amount_kobo - e.paid_now_kobo > 0:
+                open_sales.append([e, e.amount_kobo - e.paid_now_kobo])
+            continue
+        money, paid_on = e.amount_kobo, to_local(e.created_at).date()
+        while money > 0 and open_sales:
+            sale = open_sales[0]
+            used = min(money, sale[1])
+            sale[1] -= used
+            money -= used
+            if sale[1] == 0:
+                open_sales.pop(0)
+                if sale[0].due_date:
+                    if paid_on <= sale[0].due_date:
+                        record.on_time += 1
+                    else:
+                        record.late += 1
+    for sale, owed in open_sales:
+        if sale.due_date and sale.due_date < today:
+            record.overdue += 1
+            record.overdue_kobo += owed
+            record.oldest_overdue = min(record.oldest_overdue or sale.due_date, sale.due_date)
+    return record
 
 
 @dataclass

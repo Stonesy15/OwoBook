@@ -14,7 +14,7 @@ import httpx
 
 from owobook.config import Settings
 from owobook.http import HTTPError, request_with_retries
-from owobook.transcribe import BASE_KEYWORDS, Transcript, TranscriptionError
+from owobook.transcribe import Transcript, TranscriptionError
 from owobook.transcribe.audio import AudioError, to_wav, wav_duration_seconds
 
 log = logging.getLogger(__name__)
@@ -34,20 +34,24 @@ class MetaTranscriber:
             headers={"Authorization": f"Bearer {settings.model_api_key}", "Accept": "application/json"},
         )
 
-    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None) -> Transcript:
+    async def transcribe(self, audio: bytes, *, keywords: list[str] | None = None,
+                         languages: list[str] | None = None) -> Transcript:
+        """`languages`: a hint ("languageBias"), e.g. ["Portuguese", "English"]; None lets the model detect it.
+        `keywords`: names and words to bias toward (the caller adds Pidgin words for Nigerian traders)."""
         try:
             wav = await to_wav(audio)
         except AudioError as exc:
             raise TranscriptionError(str(exc)) from exc
 
-        words = list(dict.fromkeys([*(keywords or []), *BASE_KEYWORDS]))[:MAX_KEYWORDS]
         settings = {
             "model": self.model,
             "mode": "PUSH_TO_TALK",  # one voice note = one turn
             "audioEncoding": "WAV",
-            "languageBias": ["English"],  # Nigerian Pidgin isn't a listed language; it's English-based
-            "keywords": words,
         }
+        if languages:
+            settings["languageBias"] = languages
+        if words := list(dict.fromkeys(keywords or []))[:MAX_KEYWORDS]:
+            settings["keywords"] = words
         files = {
             "request": (None, json.dumps(settings), "application/json"),
             "audio": ("voice.wav", wav, "audio/wav"),

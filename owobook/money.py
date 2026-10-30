@@ -1,12 +1,15 @@
-"""Money helpers. Everything is stored as integer kobo (₦1 = 100 kobo) — never floats.
+"""Money helpers. Everything is stored as integer minor units — kobo for naira (₦1 = 100 kobo), cents,
+paise or centavos for other currencies — never floats. Names say "kobo"/"naira" for history.
 
-The LLM gives us amounts in naira; these helpers turn them into kobo, parse
-spoken/written amounts ("45k", "4.5k", "1.2m", "fifteen thousand naira"),
-and format kobo for display ("₦45,000").
+The LLM gives us amounts in the main unit; these helpers turn them into minor units, parse
+spoken/written amounts ("45k", "4.5k", "1.2m", "fifteen thousand naira", "1.5 lakh", "50 mil reais"),
+and format them in the current trader's currency ("₦45,000", "KSh 45,000", "R$ 45.000").
 """
 
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+from owobook import currency
 
 KOBO_PER_NAIRA = 100
 
@@ -24,9 +27,12 @@ _SCALES = {
     "k": 1_000, "thousand": 1_000, "thousands": 1_000,
     "m": 1_000_000, "mil": 1_000_000, "million": 1_000_000, "millions": 1_000_000,
     "b": 1_000_000_000, "billion": 1_000_000_000,
+    "mille": 1_000,  # French
+    "lakh": 100_000, "lakhs": 100_000, "lac": 100_000, "crore": 10_000_000, "crores": 10_000_000,  # India
 }
-# Words that can surround an amount without changing it.
-_FILLER = {"naira", "n", "ngn", "only", "and", "of"}
+# Words that can surround an amount without changing it (plus every currency's own words).
+_FILLER = {"naira", "n", "ngn", "only", "and", "of"} | currency.all_words()
+_SYMBOLS = ("₦", "#", "₹", "₵", "₱", "$", "£", "€")
 
 
 def naira_to_kobo(naira: int | float | str | Decimal) -> int:
@@ -42,14 +48,20 @@ def kobo_to_naira(kobo: int) -> Decimal:
     return Decimal(kobo) / KOBO_PER_NAIRA
 
 
-def format_naira(kobo: int) -> str:
-    """Format kobo for traders: 4500000 → '₦45,000'; 4500050 → '₦45,000.50'."""
+def format_money(kobo: int) -> str:
+    """Minor units → the current trader's money: 4500000 → '₦45,000' / 'KSh 45,000' / 'R$ 45.000' /
+    '45 000 FCFA'; 4500050 → '₦45,000.50'."""
+    cur = currency.current()
     sign = "-" if kobo < 0 else ""
-    naira, rem = divmod(abs(kobo), KOBO_PER_NAIRA)
-    text = f"₦{naira:,}"
+    major, rem = divmod(abs(kobo), KOBO_PER_NAIRA)
+    number = f"{major:,}".replace(",", cur.thousands)
     if rem:
-        text += f".{rem:02d}"
-    return sign + text
+        number += f"{cur.decimal}{rem:02d}"
+    if not cur.symbol:
+        return sign + number
+    if cur.suffix:
+        return f"{sign}{number} {cur.symbol}"
+    return f"{sign}{cur.symbol}{' ' if cur.space else ''}{number}"
 
 
 def line_total_kobo(quantity: int | float | Decimal, unit_price_kobo: int) -> int:
@@ -68,8 +80,13 @@ def parse_amount(text: str) -> int | None:
     if not text:
         return None
     s = text.lower().strip()
-    s = s.replace("₦", " ").replace("#", " ").replace("-", " ")
-    s = re.sub(r"(?<=\d),(?=\d)", "", s)          # 45,000 → 45000
+    for symbol in _SYMBOLS:
+        s = s.replace(symbol, " ")
+    s = re.sub(r"\b(?:ksh|kshs|ush|tsh|gh|r|rs|kz|mx)\.?(?=\s*\d)", " ", s)  # KSh 45,000 / R 500 / Rs. 2000
+    s = s.replace("-", " ")
+    if currency.current().thousands == ".":
+        s = re.sub(r"(?<=\d)\.(?=\d{3}\b)", "", s)  # R$ 45.000 → 45000
+    s = re.sub(r"(?<=\d)[, ](?=\d{3}\b)", "", s)    # 45,000 / 45 000 → 45000
     s = re.sub(r"\bn(?=\d)", " ", s)               # N45000 → 45000
     s = re.sub(r"(?<=\d)(?=[a-z])", " ", s)        # 45k → 45 k
 
@@ -101,6 +118,9 @@ def parse_amount(text: str) -> int | None:
         elif tok == "hundred":
             current = (current or 1) * 100
             saw_number = True
+        elif tok == "mil" and currency.current().thousand_mil:  # Portuguese/Spanish: "50 mil" = 50,000
+            total += (current or 1) * 1_000
+            current = Decimal(0)
         elif tok in _SCALES:
             if not saw_number:
                 return None  # a bare "k" or "m" is not an amount

@@ -11,9 +11,9 @@ from datetime import date
 from urllib.parse import quote
 
 from owobook.dates import format_date, today_local
-from owobook.ledger import Debtor, SalesSummary
+from owobook.ledger import Debtor, PaymentRecord, SalesSummary
 from owobook.models import Customer, Entry, EntryType
-from owobook.money import format_naira
+from owobook.money import format_money
 from owobook.whatsapp.i18n import LANGUAGES, STRINGS
 
 Lang = str  # one of i18n.LANGUAGES
@@ -36,12 +36,14 @@ class Link:
 @dataclass
 class Reply:
     """One outgoing WhatsApp message: plain text, text with up to 3 reply buttons, text with one link button,
-    or a PNG image (a picture receipt) with `text` as its caption."""
+    a PNG image (a picture receipt) or a PDF document (the business record), with `text` as the caption."""
 
     text: str
     buttons: list[Button] = field(default_factory=list)
     link: Link | None = None
     image: bytes | None = None
+    document: bytes | None = None
+    filename: str | None = None
 
 
 # ---------- language ----------------------------------------------------------------------
@@ -62,11 +64,11 @@ def t(lang: Lang, key: str, **kw) -> str:
 BUTTON_CONFIRM, BUTTON_FIX, BUTTON_UNDO = "confirm", "fix", "undo"
 
 
-def entry_buttons(entry_id: int) -> list[Button]:
+def entry_buttons(entry_id: int, lang: Lang = "english") -> list[Button]:
     return [
-        Button(f"{BUTTON_CONFIRM}:{entry_id}", "Correct ✓"),
-        Button(f"{BUTTON_FIX}:{entry_id}", "Fix it ✏️"),
-        Button(f"{BUTTON_UNDO}:{entry_id}", "Undo ↩️"),
+        Button(f"{BUTTON_CONFIRM}:{entry_id}", t(lang, "btn_ok")),
+        Button(f"{BUTTON_FIX}:{entry_id}", t(lang, "btn_fix")),
+        Button(f"{BUTTON_UNDO}:{entry_id}", t(lang, "btn_undo")),
     ]
 
 
@@ -101,14 +103,34 @@ def item_line(entry: Entry) -> str | None:
 
 def balance_sentence(name: str, balance_kobo: int, lang: Lang, *, total: bool = False) -> str:
     if balance_kobo > 0:
-        return t(lang, "now_owes" if total else "still_owes", name=name, amount=format_naira(balance_kobo))
+        return t(lang, "now_owes" if total else "still_owes", name=name, amount=format_money(balance_kobo))
     if balance_kobo == 0:
         return t(lang, "cleared", name=name)
-    return t(lang, "credit", name=name, amount=format_naira(-balance_kobo))
+    return t(lang, "credit", name=name, amount=format_money(-balance_kobo))
+
+
+def trust_notes(name: str, record: PaymentRecord, lang: Lang, today: date | None = None) -> list[str]:
+    """Heads-up lines for a new credit sale, from how this customer has paid before."""
+    notes = []
+    if record.overdue_kobo:
+        notes.append(t(lang, "trust_overdue", name=name, amount=format_money(record.overdue_kobo),
+                       date=format_date(record.oldest_overdue, today)))
+    if record.late >= 2 or record.late > record.on_time:
+        notes.append(t(lang, "trust_late", name=name, late=record.late, total=record.total))
+    elif record.on_time >= 3 and not record.late:
+        notes.append(t(lang, "trust_good", name=name, on_time=record.on_time, total=record.total))
+    return notes
+
+
+def trust_line(record: PaymentRecord, lang: Lang) -> str:
+    if not record.total:
+        return t(lang, "trust_new")
+    return t(lang, "trust_record", on_time=record.on_time, total=record.total)
 
 
 def sale_receipt(
-    entry: Entry, customer: Customer | None, balance_kobo: int | None, lang: Lang, today: date | None = None
+    entry: Entry, customer: Customer | None, balance_kobo: int | None, lang: Lang, today: date | None = None,
+    notes: list[str] | None = None,
 ) -> Reply:
     lines = [t(lang, "recorded"), ""]
     if customer:
@@ -118,24 +140,26 @@ def sale_receipt(
     if entry.type == EntryType.CREDIT_SALE and entry.paid_now_kobo:
         # Part-paid: show the full price, what was paid on the spot, and what's left — all from the DB.
         lines += [
-            f"💰 {format_naira(entry.amount_kobo)} {t(lang, 'sale_total')}",
-            f"💵 {format_naira(entry.paid_now_kobo)} {t(lang, 'paid_now')}",
-            f"⏳ {format_naira(entry.amount_kobo - entry.paid_now_kobo)} — {t(lang, 'owing')}",
+            f"💰 {format_money(entry.amount_kobo)} {t(lang, 'sale_total')}",
+            f"💵 {format_money(entry.paid_now_kobo)} {t(lang, 'paid_now')}",
+            f"⏳ {format_money(entry.amount_kobo - entry.paid_now_kobo)} — {t(lang, 'owing')}",
         ]
     elif entry.type == EntryType.CREDIT_SALE:
-        lines.append(f"💰 {format_naira(entry.amount_kobo)} — {t(lang, 'owing')}")
+        lines.append(f"💰 {format_money(entry.amount_kobo)} — {t(lang, 'owing')}")
     if entry.type == EntryType.CREDIT_SALE:
         if entry.due_date:
             lines.append(f"📅 {t(lang, 'due')}: {format_date(entry.due_date, today)}")
         else:
             lines.append(f"📅 {t(lang, 'no_due')}")
     else:
-        lines.append(f"💰 {format_naira(entry.amount_kobo)} — {t(lang, 'paid_cash')}")
+        lines.append(f"💰 {format_money(entry.amount_kobo)} — {t(lang, 'paid_cash')}")
     if customer and balance_kobo is not None and entry.type == EntryType.CREDIT_SALE:
         lines += ["", balance_sentence(customer.display_name, balance_kobo, lang, total=True)]
+    if notes:
+        lines += ["", *notes]
     if customer and entry.type == EntryType.CREDIT_SALE and entry.paid_now_kobo:
         lines += ["", t(lang, "receipt_hint", name=customer.display_name)]
-    return Reply("\n".join(lines), entry_buttons(entry.id))
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
 
 
 def payment_receipt(entry: Entry, customer: Customer, balance_kobo: int, lang: Lang) -> Reply:
@@ -143,18 +167,18 @@ def payment_receipt(entry: Entry, customer: Customer, balance_kobo: int, lang: L
         t(lang, "payment_recorded"),
         "",
         f"👤 {customer.display_name}",
-        f"💰 {format_naira(entry.amount_kobo)} {t(lang, 'received')}",
+        f"💰 {format_money(entry.amount_kobo)} {t(lang, 'received')}",
         "",
         balance_sentence(customer.display_name, balance_kobo, lang),
         "",
         t(lang, "receipt_hint", name=customer.display_name),
     ]
-    return Reply("\n".join(lines), entry_buttons(entry.id))
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
 
 
 def expense_receipt(entry: Entry, lang: Lang) -> Reply:
-    lines = [t(lang, "expense_recorded"), "", f"🧾 {entry.item_description}", f"💸 {format_naira(entry.amount_kobo)}"]
-    return Reply("\n".join(lines), entry_buttons(entry.id))
+    lines = [t(lang, "expense_recorded"), "", f"🧾 {entry.item_description}", f"💸 {format_money(entry.amount_kobo)}"]
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
 
 
 def receipt_for(entry: Entry, balance_kobo: int | None, lang: Lang, today: date | None = None) -> Reply:
@@ -179,17 +203,20 @@ def _due_text(d: Debtor, lang: Lang, today: date) -> str:
     return ""
 
 
-def balance_reply(debtor: Debtor, lang: Lang, today: date | None = None) -> Reply:
+def balance_reply(debtor: Debtor, lang: Lang, today: date | None = None, record: PaymentRecord | None = None) -> Reply:
+    """What a customer owes, when it's due, and (if given) how they've paid before."""
     today = today or today_local()
     name = debtor.customer.display_name
     if debtor.balance_kobo <= 0:
-        text = t(lang, "balance_zero", name=name)
+        lines = [t(lang, "balance_zero", name=name)]
         if debtor.balance_kobo < 0:
-            text = balance_sentence(name, debtor.balance_kobo, lang)
-        return Reply(text)
-    lines = [t(lang, "balance", name=name, amount=format_naira(debtor.balance_kobo))]
-    if due := _due_text(debtor, lang, today):
-        lines.append(due)
+            lines = [balance_sentence(name, debtor.balance_kobo, lang)]
+    else:
+        lines = [t(lang, "balance", name=name, amount=format_money(debtor.balance_kobo))]
+        if due := _due_text(debtor, lang, today):
+            lines.append(due)
+    if record is not None:
+        lines.append(trust_line(record, lang))
     return Reply("\n".join(lines))
 
 
@@ -200,7 +227,7 @@ def debtors_reply(debtors: list[Debtor], lang: Lang, *, overdue_only: bool = Fal
     title = t(lang, "overdue_title" if overdue_only else "debtors_title", count=len(debtors))
     lines = [title, ""]
     for i, d in enumerate(debtors, 1):
-        line = f"{i}. {d.customer.display_name} — {format_naira(d.balance_kobo)}"
+        line = f"{i}. {d.customer.display_name} — {format_money(d.balance_kobo)}"
         if d.overdue:
             line += f" · ⚠️ {format_date(d.next_due, today)}"
         elif d.due_today:
@@ -209,7 +236,7 @@ def debtors_reply(debtors: list[Debtor], lang: Lang, *, overdue_only: bool = Fal
             line += f" · {t(lang, 'list_due', date=format_date(d.next_due, today))}"
         lines.append(line)
     total = sum(d.balance_kobo for d in debtors)
-    lines += ["", f"{t(lang, 'total')}: {format_naira(total)}"]
+    lines += ["", f"{t(lang, 'total')}: {format_money(total)}"]
     return Reply("\n".join(lines))
 
 
@@ -217,13 +244,13 @@ def summary_reply(s: SalesSummary, lang: Lang) -> Reply:
     rows = [
         f"📊 {t(lang, 'p_' + s.period)}",
         "",
-        t(lang, "s_cash", amount=format_naira(s.cash_sales_kobo)),
-        t(lang, "s_credit", amount=format_naira(s.credit_sales_kobo)),
-        t(lang, "s_total", amount=format_naira(s.total_sales_kobo)),
-        t(lang, "s_collected", amount=format_naira(s.collected_kobo)),
+        t(lang, "s_cash", amount=format_money(s.cash_sales_kobo)),
+        t(lang, "s_credit", amount=format_money(s.credit_sales_kobo)),
+        t(lang, "s_total", amount=format_money(s.total_sales_kobo)),
+        t(lang, "s_collected", amount=format_money(s.collected_kobo)),
     ]
     if s.expenses_kobo:
-        rows.append(t(lang, "s_expenses", amount=format_naira(s.expenses_kobo)))
+        rows.append(t(lang, "s_expenses", amount=format_money(s.expenses_kobo)))
     return Reply("\n".join(rows))
 
 
@@ -248,6 +275,8 @@ def render_plain(reply: Reply) -> str:
     """Text-only rendering (simulator, logs)."""
     if reply.image:
         return f"[🖼 receipt picture]\n{reply.text}"
+    if reply.document:
+        return f"[📄 {reply.filename or 'document'}]\n{reply.text}"
     if reply.link:
         return f"{reply.text}\n\n[🔗 {reply.link.title}] {reply.link.url}"
     if not reply.buttons:

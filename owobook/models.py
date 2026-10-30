@@ -30,7 +30,10 @@ class Language(StrEnum):
     YORUBA = "yoruba"
     HAUSA = "hausa"
     IGBO = "igbo"
-    AUTO = "auto"  # = English (the default reply language)
+    PORTUGUESE = "portuguese"
+    FRENCH = "french"
+    HINDI = "hindi"
+    AUTO = "auto"  # not chosen yet: English, until a message in another language is detected
 
 
 class EntryType(StrEnum):
@@ -65,6 +68,7 @@ class Trader(Base):
     name: Mapped[str | None] = mapped_column(String(120))
     shop_name: Mapped[str | None] = mapped_column(String(120))
     language_pref: Mapped[str] = mapped_column(String(16), default=Language.AUTO)
+    currency: Mapped[str] = mapped_column(String(3), default="NGN", server_default="NGN")  # from the phone's country code
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)

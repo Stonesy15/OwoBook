@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from owobook.money import format_naira, kobo_to_naira, line_total_kobo, naira_to_kobo, parse_amount
+from owobook.money import format_money, kobo_to_naira, line_total_kobo, naira_to_kobo, parse_amount
 
 
 @pytest.mark.parametrize(
@@ -33,8 +33,8 @@ def test_kobo_to_naira():
         (5, "₦0.05"),
     ],
 )
-def test_format_naira(kobo, text):
-    assert format_naira(kobo) == text
+def test_format_money(kobo, text):
+    assert format_money(kobo) == text
 
 
 def test_line_total_is_computed_in_code():

@@ -41,6 +41,11 @@ def load_cases(only: set[str] | None) -> list[dict]:
     return [c for c in cases if not only or c["id"] in only]
 
 
+def arg(args: dict, name: str):
+    """Tool argument by its name, or its old "_naira" name."""
+    return args.get(name, args.get(f"{name}_naira"))
+
+
 def check_call(expected: dict, args: dict, today: date) -> list[str]:
     """Return a list of mismatches between one expected call and the model's arguments."""
     problems = []
@@ -52,8 +57,8 @@ def check_call(expected: dict, args: dict, today: date) -> list[str]:
         problems.append(f"paid {args.get('paid')} ≠ {expected['paid']}")
     if "amount" in expected or "paid_now" in expected:
         try:  # the same code path the bot uses: totals and part-payments are computed in code
-            kobo, paid_now = sale_amounts(args.get("amount_naira"), args.get("unit_price_naira"), args.get("quantity"),
-                                          args.get("amount_paid_naira"), args.get("balance_naira"))
+            kobo, paid_now = sale_amounts(arg(args, "amount"), arg(args, "unit_price"), args.get("quantity"),
+                                          arg(args, "amount_paid"), arg(args, "balance"))
         except ToolInputError:
             kobo, paid_now = None, 0
         if "amount" in expected and kobo != expected["amount"] * 100:

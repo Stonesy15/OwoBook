@@ -57,9 +57,9 @@ async def test_debt_book_photo_records_every_line(db):
     provider = FakeProvider(script=[
         reading("Mama Bisi took 3 bags of rice for 45000, will pay Friday\nSold 5 crates of eggs for 12000 cash"),
         calls(("record_sale", {"customer_name": "Mama Bisi", "item_description": "rice", "quantity": 3,
-                               "unit": "bags", "amount_naira": 45000, "paid": False, "due_date": "Friday"}),
+                               "unit": "bags", "amount": 45000, "paid": False, "due_date": "Friday"}),
               ("record_sale", {"item_description": "eggs", "quantity": 5, "unit": "crates",
-                               "amount_naira": 12000, "paid": True})),
+                               "amount": 12000, "paid": True})),
     ])
     replies = await handle_photo(db, provider, WA, JPEG, "image/jpeg", wa_message_id="wamid.P1")
 
@@ -101,7 +101,7 @@ async def test_photo_reply_is_in_the_chosen_language(db):
     trader.language_pref = "pidgin"
     provider = FakeProvider(script=[
         reading("Iya Tope took 2 tins of oil for 9000"),
-        calls(("record_sale", {"customer_name": "Iya Tope", "amount_naira": 9000, "paid": False})),
+        calls(("record_sale", {"customer_name": "Iya Tope", "amount": 9000, "paid": False})),
     ])
     replies = await handle_photo(db, provider, WA, JPEG, "image/jpeg", caption="abeg write am, she never pay")
     assert replies[0].text.startswith("🧾 Wetin I see for the picture:")

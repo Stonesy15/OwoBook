@@ -78,7 +78,8 @@ Mama Bisi now owes you ₦45,000 in total.
 
 ### Tone
 Friendly, short, respectful. Never lecture. Never use long paragraphs.
-**Reply language (changed 29 Oct 2026, Hosea's decision):** OwoBook replies in the trader's *chosen* language, default **English** — a Pidgin voice note gets an English reply. The trader can switch with "reply me in Pidgin / Yoruba / Hausa / Igbo" (`save_profile.language_pref`). Fixed texts live in `owobook/whatsapp/i18n.py`. Voice notes must be English/Pidgin (Muse Voice Transcribe doesn't list Yorùbá, Hausa or Igbo); text works in all five.
+**Reply language (29–30 Oct 2026, Hosea's decisions):** OwoBook replies in the trader's *chosen* language, default **English** — a Pidgin voice note gets an English reply. Until a trader chooses, a Portuguese, French or Hindi message is **auto-detected** and becomes their language (English/Pidgin never switch it). The trader can switch with "reply me in Pidgin / Yoruba / Hausa / Igbo / Portuguese / French / Hindi" (`save_profile.language_pref`). Fixed texts live in `owobook/whatsapp/i18n.py`. Voice notes work in English, Pidgin, Portuguese, French and Hindi (Muse Voice Transcribe doesn't list Yorùbá, Hausa, Igbo or Swahili); text works in all eight.
+**Currency (30 Oct 2026):** from the phone's country code (`owobook/currency.py`), or set by the trader; amounts are integer minor units.
 
 ### Debt reminders
 - A scheduled job runs daily at **08:00 Africa/Lagos**.

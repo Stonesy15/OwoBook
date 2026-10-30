@@ -10,17 +10,22 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
-from owobook import ledger, receipt
-from owobook.dates import PERIODS, format_date, resolve_due_date
+from owobook import business_record, currency, ledger, receipt
+from owobook.dates import PERIODS, format_date, resolve_due_date, to_local, utcnow
 from owobook.models import Trader
-from owobook.money import format_naira, line_total_kobo, naira_to_kobo, parse_amount
+from owobook.money import format_money, line_total_kobo, naira_to_kobo, parse_amount
 from owobook.whatsapp import formatting as fmt
 from owobook.whatsapp.formatting import Lang, Reply
 
 Amount = float | str  # the model may send 45000 or "45k"; we convert in code
+
+
+def _alias(name: str) -> AliasChoices:
+    """Accept the old "_naira" names too (amount_naira → amount), from before other currencies."""
+    return AliasChoices(name, f"{name}_naira")
 
 
 # ---------- argument schemas ---------------------------------------------------------------
@@ -45,16 +50,16 @@ class RecordSale(ToolArgs):
     item_description: str | None = Field(None, description="What was sold, e.g. 'rice'.")
     quantity: float | None = Field(None, description="Number of units, e.g. 3.")
     unit: str | None = Field(None, description="Unit, e.g. 'bags', 'crates'.")
-    amount_naira: Amount | None = Field(None, description="TOTAL price in naira (number, or as said e.g. '45k').")
-    unit_price_naira: Amount | None = Field(
-        None, description="Price PER UNIT when the trader says 'each'/'per bag'. Code multiplies by quantity."
+    amount: Amount | None = Field(None, validation_alias=_alias("amount"), description="TOTAL price in the trader's currency (number, or as said e.g. '45k').")
+    unit_price: Amount | None = Field(
+        None, validation_alias=_alias("unit_price"), description="Price PER UNIT when the trader says 'each'/'per bag'. Code multiplies by quantity."
     )
     paid: bool = Field(description="true = paid in full now (cash/transfer); false = all or part still owing.")
-    amount_paid_naira: Amount | None = Field(
-        None, description="Part-payment: money the customer paid ON THE SPOT for this sale, when some is still owing."
+    amount_paid: Amount | None = Field(
+        None, validation_alias=_alias("amount_paid"), description="Part-payment: money the customer paid ON THE SPOT for this sale, when some is still owing."
     )
-    balance_naira: Amount | None = Field(
-        None, description="Part-payment: what the customer still owes for this sale ('balance me 70k'), if the trader says it."
+    balance: Amount | None = Field(
+        None, validation_alias=_alias("balance"), description="Part-payment: what the customer still owes for this sale ('balance me 70k'), if the trader says it."
     )
     due_date: str | None = Field(
         None, description="When the customer will pay, exactly as said: 'Friday', 'tomorrow', 'end of month', or YYYY-MM-DD."
@@ -66,7 +71,7 @@ class RecordPayment(ToolArgs):
     """Record money a customer paid towards what they owe ("don pay", "paid", "settle")."""
 
     customer_name: str
-    amount_naira: Amount = Field(description="Amount paid in naira (number, or as said e.g. '20k').")
+    amount: Amount = Field(validation_alias=_alias("amount"), description="Amount paid in the trader's currency (number, or as said e.g. '20k').")
     new_customer: bool = Field(False, description="true only if the trader confirmed this is a NEW customer.")
 
 
@@ -74,11 +79,12 @@ class RecordExpense(ToolArgs):
     """Record money the trader spent on the business (transport, stock, shop rent, etc.)."""
 
     description: str
-    amount_naira: Amount
+    amount: Amount = Field(validation_alias=_alias("amount"))
 
 
 class GetCustomerBalance(ToolArgs):
-    """How much one customer owes the trader."""
+    """How much one customer owes the trader, and how they've paid before (on time vs late). Also use it
+    for "can I give X credit?" / "does X pay on time?" — report the facts, don't advise."""
 
     customer_name: str
 
@@ -103,9 +109,9 @@ class UpdateEntry(ToolArgs):
     item_description: str | None = None
     quantity: float | None = None
     unit: str | None = None
-    amount_naira: Amount | None = Field(None, description="New TOTAL in naira.")
-    unit_price_naira: Amount | None = Field(None, description="New price per unit; code multiplies by quantity.")
-    amount_paid_naira: Amount | None = Field(None, description="New amount paid on the spot (credit sales).")
+    amount: Amount | None = Field(None, validation_alias=_alias("amount"), description="New TOTAL in the trader's currency.")
+    unit_price: Amount | None = Field(None, validation_alias=_alias("unit_price"), description="New price per unit; code multiplies by quantity.")
+    amount_paid: Amount | None = Field(None, validation_alias=_alias("amount_paid"), description="New amount paid on the spot (credit sales).")
     due_date: str | None = None
     paid: bool | None = None
     new_customer: bool = False
@@ -124,12 +130,15 @@ class AskClarification(ToolArgs):
 
 
 class SaveProfile(ToolArgs):
-    """Save the trader's own name / shop name when they tell you, or the language OwoBook should reply in
-    when they ask for one ("reply me in Yoruba", "speak Hausa", "English please")."""
+    """Save the trader's own name / shop name when they tell you, the language OwoBook should reply in
+    when they ask for one ("reply me in Yoruba", "speak Hausa", "English please"), or their currency when
+    they say it ("my currency is reais", "use Kenyan shillings")."""
 
     name: str | None = None
     shop_name: str | None = None
-    language_pref: Literal["english", "pidgin", "yoruba", "hausa", "igbo"] | None = None
+    language_pref: Literal["english", "pidgin", "yoruba", "hausa", "igbo", "portuguese", "french", "hindi"] | None = None
+    currency: str | None = Field(None, description="ISO code: NGN, GHS, KES, UGX, TZS, RWF, ZAR, XOF, XAF, INR, BRL, "
+                                                   "AOA, MZN, MXN, PHP, USD or GBP.")
 
 
 class SaveCustomerPhone(ToolArgs):
@@ -151,6 +160,14 @@ class MakeReceipt(ToolArgs):
     entry_id: int | None = Field(None, description="A specific entry from RECENT_ENTRIES, if the trader means one.")
 
 
+class BusinessRecordArgs(ToolArgs):
+    """Make the trader's business record: a PDF statement of sales, money collected, expenses, credit given and
+    payment history for the last N days, to show a bank, microfinance bank or cooperative for a loan ("send me
+    my business record", "statement for 90 days", "I need records for a loan")."""
+
+    days: int = Field(30, description="How many days back: 30, 60 or 90 (default 30).")
+
+
 TOOL_MODELS: dict[str, type[BaseModel]] = {
     "record_sale": RecordSale,
     "record_payment": RecordPayment,
@@ -164,6 +181,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "save_profile": SaveProfile,
     "save_customer_phone": SaveCustomerPhone,
     "make_receipt": MakeReceipt,
+    "business_record": BusinessRecordArgs,
 }
 
 
@@ -260,7 +278,7 @@ def sale_amounts(
             paid_k = total - balance_k
         elif paid_k + balance_k != total:
             raise ToolInputError(
-                f"{format_naira(paid_k)} + {format_naira(balance_k)} no be {format_naira(total)}. Wetin be the full price?"
+                f"{format_money(paid_k)} + {format_money(balance_k)} no be {format_money(total)}. Wetin be the full price?"
             )
         if paid_k < 0:
             raise ToolInputError("The balance pass the price. Wetin be the full price?")
@@ -303,7 +321,7 @@ def execute_tool(ctx: AgentContext, name: str, raw_args: dict[str, Any]) -> Tool
 
 
 def _record_sale(ctx: AgentContext, a: RecordSale) -> ToolResult:
-    amount, paid_now = sale_amounts(a.amount_naira, a.unit_price_naira, a.quantity, a.amount_paid_naira, a.balance_naira)
+    amount, paid_now = sale_amounts(a.amount, a.unit_price, a.quantity, a.amount_paid, a.balance)
     if amount is None:
         return _error("How much e cost?")
     paid = a.paid and not paid_now  # a part-payment means some is still owing
@@ -323,18 +341,23 @@ def _record_sale(ctx: AgentContext, a: RecordSale) -> ToolResult:
         raw_text=ctx.raw_text,
     )
     balance = ledger.customer_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
+    notes, record = [], None
+    if entry.customer and entry.type == "credit_sale":  # heads-up from how this customer paid before
+        record = ledger.payment_record(ctx.db, ctx.trader, entry.customer, ctx.today, before_entry_id=entry.id)
+        notes = fmt.trust_notes(entry.customer.display_name, record, ctx.lang, ctx.today)
     return ToolResult(
         data={
             "ok": True,
             "entry_id": entry.id,
             "type": entry.type,
-            "amount": format_naira(entry.amount_kobo),
-            "paid_now": format_naira(entry.paid_now_kobo) if entry.paid_now_kobo else None,
+            "payment_record": {"on_time": record.on_time, "late": record.late} if record else None,
+            "amount": format_money(entry.amount_kobo),
+            "paid_now": format_money(entry.paid_now_kobo) if entry.paid_now_kobo else None,
             "customer": entry.customer.display_name if entry.customer else None,
             "due_date": entry.due_date.isoformat() if entry.due_date else None,
-            "customer_total_owed": format_naira(balance) if balance is not None else None,
+            "customer_total_owed": format_money(balance) if balance is not None else None,
         },
-        reply=fmt.sale_receipt(entry, entry.customer, balance, ctx.lang, ctx.today),
+        reply=fmt.sale_receipt(entry, entry.customer, balance, ctx.lang, ctx.today, notes),
         entry_id=entry.id,
     )
 
@@ -344,7 +367,7 @@ def _record_payment(ctx: AgentContext, a: RecordPayment) -> ToolResult:
         ctx.db,
         ctx.trader,
         customer_name=a.customer_name,
-        amount_kobo=to_kobo(a.amount_naira),
+        amount_kobo=to_kobo(a.amount),
         new_customer=a.new_customer,
         source=ctx.source,
         raw_text=ctx.raw_text,
@@ -354,9 +377,9 @@ def _record_payment(ctx: AgentContext, a: RecordPayment) -> ToolResult:
         data={
             "ok": True,
             "entry_id": entry.id,
-            "amount": format_naira(entry.amount_kobo),
+            "amount": format_money(entry.amount_kobo),
             "customer": entry.customer.display_name,
-            "remaining_balance": format_naira(balance),
+            "remaining_balance": format_money(balance),
         },
         reply=fmt.payment_receipt(entry, entry.customer, balance, ctx.lang),
         entry_id=entry.id,
@@ -368,12 +391,12 @@ def _record_expense(ctx: AgentContext, a: RecordExpense) -> ToolResult:
         ctx.db,
         ctx.trader,
         description=a.description,
-        amount_kobo=to_kobo(a.amount_naira),
+        amount_kobo=to_kobo(a.amount),
         source=ctx.source,
         raw_text=ctx.raw_text,
     )
     return ToolResult(
-        data={"ok": True, "entry_id": entry.id, "amount": format_naira(entry.amount_kobo)},
+        data={"ok": True, "entry_id": entry.id, "amount": format_money(entry.amount_kobo)},
         reply=fmt.expense_receipt(entry, ctx.lang),
         entry_id=entry.id,
     )
@@ -382,14 +405,17 @@ def _record_expense(ctx: AgentContext, a: RecordExpense) -> ToolResult:
 def _get_customer_balance(ctx: AgentContext, a: GetCustomerBalance) -> ToolResult:
     customer = ledger.resolve_customer(ctx.db, ctx.trader, a.customer_name, create=False)
     debtor = ledger.debtor_for(ctx.db, ctx.trader, customer, ctx.today)
+    record = ledger.payment_record(ctx.db, ctx.trader, customer, ctx.today)
     return ToolResult(
         data={
             "customer": customer.display_name,
-            "balance": format_naira(debtor.balance_kobo),
+            "balance": format_money(debtor.balance_kobo),
             "next_due": debtor.next_due.isoformat() if debtor.next_due else None,
             "overdue": debtor.overdue,
+            "paid_on_time": record.on_time,
+            "paid_late": record.late,
         },
-        reply=fmt.balance_reply(debtor, ctx.lang, ctx.today),
+        reply=fmt.balance_reply(debtor, ctx.lang, ctx.today, record),
     )
 
 
@@ -398,7 +424,7 @@ def _list_debtors(ctx: AgentContext, a: ListDebtors) -> ToolResult:
     return ToolResult(
         data={
             "debtors": [
-                {"name": d.customer.display_name, "owes": format_naira(d.balance_kobo), "overdue": d.overdue}
+                {"name": d.customer.display_name, "owes": format_money(d.balance_kobo), "overdue": d.overdue}
                 for d in debtors
             ]
         },
@@ -412,10 +438,10 @@ def _get_sales_summary(ctx: AgentContext, a: GetSalesSummary) -> ToolResult:
     return ToolResult(
         data={
             "period": a.period,
-            "cash_sales": format_naira(s.cash_sales_kobo),
-            "credit_sales": format_naira(s.credit_sales_kobo),
-            "collected": format_naira(s.collected_kobo),
-            "expenses": format_naira(s.expenses_kobo),
+            "cash_sales": format_money(s.cash_sales_kobo),
+            "credit_sales": format_money(s.credit_sales_kobo),
+            "collected": format_money(s.collected_kobo),
+            "expenses": format_money(s.expenses_kobo),
         },
         reply=fmt.summary_reply(s, ctx.lang),
     )
@@ -424,7 +450,7 @@ def _get_sales_summary(ctx: AgentContext, a: GetSalesSummary) -> ToolResult:
 def _update_entry(ctx: AgentContext, a: UpdateEntry) -> ToolResult:
     entry = ledger.get_entry(ctx.db, ctx.trader, a.entry_id)
     quantity = a.quantity if a.quantity is not None else entry.quantity
-    amount = _total_kobo(a.amount_naira, a.unit_price_naira, quantity)
+    amount = _total_kobo(a.amount, a.unit_price, quantity)
     if amount is None and a.quantity is not None and entry.quantity:
         # "no, na 3 cartons": keep the saved price per unit and recompute the total in code.
         amount = line_total_kobo(a.quantity, round(entry.amount_kobo / entry.quantity))
@@ -441,13 +467,13 @@ def _update_entry(ctx: AgentContext, a: UpdateEntry) -> ToolResult:
         quantity=a.quantity,
         unit=a.unit,
         amount_kobo=amount,
-        paid_now_kobo=to_kobo(a.amount_paid_naira),
+        paid_now_kobo=to_kobo(a.amount_paid),
         paid=a.paid,
         **fields,
     )
     balance = ledger.customer_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
     return ToolResult(
-        data={"ok": True, "entry_id": entry.id, "amount": format_naira(entry.amount_kobo)},
+        data={"ok": True, "entry_id": entry.id, "amount": format_money(entry.amount_kobo)},
         reply=fmt.receipt_for(entry, balance, ctx.lang, ctx.today),
         entry_id=entry.id,
     )
@@ -475,6 +501,12 @@ def _save_profile(ctx: AgentContext, a: SaveProfile) -> ToolResult:
     if a.language_pref:
         tr.language_pref = a.language_pref
         ctx.lang = fmt.reply_language(a.language_pref)  # this reply and the rest of the turn use it
+    code = (a.currency or "").strip().upper()
+    if code and (code not in currency.CURRENCIES or code == "XXX"):
+        raise ToolInputError(f"I don't know the currency '{a.currency}'. Which one?")
+    if code:
+        tr.currency = code
+        currency.set_current(code)
     ctx.db.flush()
     lines = []
     if a.name or a.shop_name:
@@ -482,7 +514,10 @@ def _save_profile(ctx: AgentContext, a: SaveProfile) -> ToolResult:
         lines.append(fmt.t(ctx.lang, "profile_saved", name=who))
     if a.language_pref:
         lines.append(fmt.t(ctx.lang, "language_saved"))
-    data = {"ok": True, "name": tr.name, "shop_name": tr.shop_name, "reply_language": ctx.lang}
+    if code:
+        cur = currency.get(code)
+        lines.append(fmt.t(ctx.lang, "currency_saved", currency=f"{cur.code} ({cur.symbol})"))
+    data = {"ok": True, "name": tr.name, "shop_name": tr.shop_name, "reply_language": ctx.lang, "currency": tr.currency}
     return ToolResult(data=data, reply=Reply("\n\n".join(lines)) if lines else None)
 
 
@@ -506,9 +541,23 @@ def _make_receipt(ctx: AgentContext, a: MakeReceipt) -> ToolResult:
     caption = fmt.t(ctx.lang, "receipt_caption", name=info.customer or "your customer")
     return ToolResult(
         data={"ok": True, "receipt_no": info.number, "entry_id": entry.id, "customer": info.customer,
-              "balance_owing": format_naira(info.balance_kobo), "sent_as": "picture"},
+              "balance_owing": format_money(info.balance_kobo), "sent_as": "picture"},
         reply=Reply(caption, image=receipt.render_png(info, ctx.lang)),
         entry_id=entry.id,
+    )
+
+
+def _business_record(ctx: AgentContext, a: BusinessRecordArgs) -> ToolResult:
+    days = min(max(a.days, 7), 365)
+    rec = business_record.build_record(ctx.db, ctx.trader, days, ctx.today)
+    if not rec.entries:
+        return ToolResult(data={"error": "no entries in that period"}, reply=Reply(fmt.t(ctx.lang, "record_empty", days=days)),
+                          ends_turn=True)
+    pdf = business_record.render_pdf(rec, to_local(utcnow()))
+    return ToolResult(
+        data={"ok": True, "days": days, "sent_as": "pdf", "total_sales": format_money(rec.total_sales),
+              "transactions": len(rec.entries)},
+        reply=Reply(fmt.t(ctx.lang, "record_caption", days=days), document=pdf, filename=business_record.filename(rec)),
     )
 
 
@@ -525,6 +574,7 @@ _HANDLERS = {
     "save_profile": _save_profile,
     "save_customer_phone": _save_customer_phone,
     "make_receipt": _make_receipt,
+    "business_record": _business_record,
 }
 
 
@@ -535,9 +585,9 @@ def describe_entry(entry, today: date) -> str:
         parts.append(entry.customer.display_name)
     if item := fmt.item_line(entry):
         parts.append(item)
-    parts.append(format_naira(entry.amount_kobo))
+    parts.append(format_money(entry.amount_kobo))
     if entry.paid_now_kobo:
-        parts.append(f"paid {format_naira(entry.paid_now_kobo)} on the spot")
+        parts.append(f"paid {format_money(entry.paid_now_kobo)} on the spot")
     if entry.due_date:
         parts.append(f"due {format_date(entry.due_date, today)}")
     return " · ".join(parts)

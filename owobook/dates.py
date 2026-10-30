@@ -98,6 +98,35 @@ def _explicit_date(s: str, today: date) -> date | None:
     return d
 
 
+# Date words in OwoBook's other languages → the English words below already understand.
+_FOREIGN_DATE_WORDS = {
+    # Portuguese
+    "depois de amanhã": "day after tomorrow", "depois de amanha": "day after tomorrow", "amanhã": "tomorrow",
+    "amanha": "tomorrow", "hoje": "today", "semana que vem": "next week", "próxima semana": "next week",
+    "fim do mês": "end of month", "final do mês": "end of month", "mês que vem": "next month",
+    "segunda-feira": "monday", "terça-feira": "tuesday", "quarta-feira": "wednesday", "quinta-feira": "thursday",
+    "sexta-feira": "friday", "terça": "tuesday", "quarta": "wednesday", "quinta": "thursday", "sexta": "friday",
+    "sábado": "saturday", "sabado": "saturday", "domingo": "sunday",
+    # French
+    "après-demain": "day after tomorrow", "apres-demain": "day after tomorrow", "demain": "tomorrow",
+    "aujourd'hui": "today", "semaine prochaine": "next week", "fin du mois": "end of month",
+    "mois prochain": "next month", "lundi": "monday", "mardi": "tuesday", "mercredi": "wednesday",
+    "jeudi": "thursday", "vendredi": "friday", "samedi": "saturday", "dimanche": "sunday",
+    # Hindi (Devanagari and Latin)
+    "परसों": "day after tomorrow", "कल": "tomorrow", "आज": "today", "अगले हफ़्ते": "next week",
+    "अगले हफ्ते": "next week", "अगले महीने": "next month", "सोमवार": "monday", "मंगलवार": "tuesday",
+    "बुधवार": "wednesday", "गुरुवार": "thursday", "शुक्रवार": "friday", "शनिवार": "saturday", "रविवार": "sunday",
+    "parson": "day after tomorrow", "kal": "tomorrow", "aaj": "today", "agle hafte": "next week",
+    "agle mahine": "next month", "somvar": "monday", "mangalvar": "tuesday", "budhvar": "wednesday",
+    "guruvar": "thursday", "shukravar": "friday", "shanivar": "saturday", "ravivar": "sunday",
+    # Yorùbá, Hausa, Igbo "tomorrow"
+    "ọ̀la": "tomorrow", "ọla": "tomorrow", "lola": "tomorrow", "gobe": "tomorrow", "echi": "tomorrow",
+}
+_FOREIGN_RE = re.compile(
+    r"(?<!\w)(" + "|".join(re.escape(w) for w in sorted(_FOREIGN_DATE_WORDS, key=len, reverse=True)) + r")(?!\w)"
+)
+
+
 def resolve_due_date(text: str, today: date | None = None) -> date | None:
     """Turn a spoken due date into a calendar date in Lagos, or None if not understood.
 
@@ -106,7 +135,8 @@ def resolve_due_date(text: str, today: date | None = None) -> date | None:
     "in 3 days", "two weeks time", "weekend", and explicit dates like "5/11" or "5th Nov".
     """
     today = today or today_local()
-    s = re.sub(r"[^\w\s/.-]", " ", text.lower())
+    s = _FOREIGN_RE.sub(lambda m: _FOREIGN_DATE_WORDS[m[1]], text.lower())
+    s = re.sub(r"[^\w\s/.-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     if not s:
         return None

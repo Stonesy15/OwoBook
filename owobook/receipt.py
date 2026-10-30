@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 from owobook import ledger
 from owobook.dates import to_local
 from owobook.models import Entry, EntryType, Trader
-from owobook.money import format_naira
+from owobook.money import format_money
+from owobook.script import drawable
 from owobook.whatsapp import formatting as fmt
 from owobook.whatsapp.formatting import Lang
 
@@ -49,11 +50,11 @@ def build_receipt(db: Session, trader: Trader, entry: Entry) -> ReceiptInfo:
         kind="payment" if entry.type == EntryType.PAYMENT else "sale",
         number=f"OB-{entry.id:05d}",
         issued_at=to_local(entry.created_at),
-        shop=trader.shop_name or trader.name or "OwoBook",
-        customer=customer.display_name if customer else None,
+        shop=drawable(trader.shop_name or trader.name or "OwoBook"),
+        customer=drawable(customer.display_name) if customer else None,
     )
     if entry.type == EntryType.PAYMENT:
-        info.rows = [("rc_prev", format_naira(after + entry.amount_kobo)), ("rc_paid", format_naira(entry.amount_kobo))]
+        info.rows = [("rc_prev", format_money(after + entry.amount_kobo)), ("rc_paid", format_money(entry.amount_kobo))]
         info.balance_kobo = max(after, 0)
         if info.balance_kobo:
             dues = [s.due_date for s, _ in ledger.outstanding_sales(db, trader, customer) if s.due_date]
@@ -61,12 +62,12 @@ def build_receipt(db: Session, trader: Trader, entry: Entry) -> ReceiptInfo:
         return info
 
     if item := fmt.item_line(entry):
-        info.rows.append(("rc_item", item))
-    info.rows.append(("rc_total", format_naira(entry.amount_kobo)))
+        info.rows.append(("rc_item", drawable(item)))
+    info.rows.append(("rc_total", format_money(entry.amount_kobo)))
     if entry.type == EntryType.CASH_SALE:
-        info.rows.append(("rc_paid", format_naira(entry.amount_kobo)))
+        info.rows.append(("rc_paid", format_money(entry.amount_kobo)))
         return info
-    info.rows.append(("rc_paid", format_naira(entry.paid_now_kobo)))
+    info.rows.append(("rc_paid", format_money(entry.paid_now_kobo)))
     info.balance_kobo = entry.amount_kobo - entry.paid_now_kobo
     info.due = entry.due_date
     if after > info.balance_kobo:
@@ -154,11 +155,11 @@ def _draw(img: Image.Image, info: ReceiptInfo, lang: Lang) -> int:
     # Balance box: what's still owing (+ due date), or PAID IN FULL.
     if info.balance_kobo > 0:
         big = _font(30, True)
-        box_rows = [(t("rc_balance"), format_naira(info.balance_kobo), big)]
+        box_rows = [(t("rc_balance"), format_money(info.balance_kobo), big)]
         if info.due:
             box_rows.append((t("rc_due"), f"{info.due:%a, %-d %b %Y}", value_font))
         if info.all_owing_kobo:
-            box_rows.append((t("rc_all_owing"), format_naira(info.all_owing_kobo), value_font))
+            box_rows.append((t("rc_all_owing"), format_money(info.all_owing_kobo), value_font))
         top, y = y, y + 22
         box_height = sum(36 * max(map(len, split(label, value, font))) + 10 for label, value, font in box_rows)
         d.rounded_rectangle([PAD - 16, top, WIDTH - PAD + 16, y + box_height + 12], radius=16, fill=OWING_BG)

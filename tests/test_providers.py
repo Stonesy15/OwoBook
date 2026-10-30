@@ -57,13 +57,13 @@ def tool_message(name: str, args) -> dict:
 @respx.mock
 async def test_meta_provider_parses_tool_calls_and_usage():
     route = respx.post(META_URL).mock(return_value=httpx.Response(
-        200, json=completion(tool_message("record_payment", {"customer_name": "Mama Bisi", "amount_naira": 20000}))
+        200, json=completion(tool_message("record_payment", {"customer_name": "Mama Bisi", "amount": 20000}))
     ))
     provider = get_provider("meta", settings())
     resp = await provider.chat([{"role": "user", "content": "Mama Bisi don pay 20k"}], tools=[{"type": "function"}])
 
     assert resp.tool_calls[0].name == "record_payment"
-    assert resp.tool_calls[0].arguments == {"customer_name": "Mama Bisi", "amount_naira": 20000}
+    assert resp.tool_calls[0].arguments == {"customer_name": "Mama Bisi", "amount": 20000}
     assert (resp.usage.input_tokens, resp.usage.output_tokens) == (100, 20)
     request = route.calls.last.request
     assert request.headers["authorization"] == "Bearer LLM|test-key"
@@ -168,7 +168,8 @@ async def test_meta_transcriber_sends_multipart_request():
     route = respx.post("https://api.meta.ai/v1/asr/transcribe").mock(return_value=httpx.Response(
         200, json={"sessionId": "s", "transcript": "Mama Bisi don pay 20k", "audioDurationMs": 2500, "turns": []}
     ))
-    transcript = await MetaTranscriber(settings()).transcribe(make_wav(), keywords=["Mama Bisi"])
+    transcript = await MetaTranscriber(settings()).transcribe(make_wav(), keywords=["Mama Bisi", "naira"],
+                                                             languages=["Portuguese", "English"])
     assert transcript.text == "Mama Bisi don pay 20k" and transcript.audio_seconds == 2.5
 
     body = route.calls.last.request.content
@@ -176,7 +177,13 @@ async def test_meta_transcriber_sends_multipart_request():
     request_json = json.loads(body.split(b'name="request"')[1].split(b"\r\n\r\n", 1)[1].split(b"\r\n--")[0])
     assert request_json["model"] == "muse-voice-transcribe-1.0"
     assert request_json["audioEncoding"] == "WAV" and request_json["mode"] == "PUSH_TO_TALK"
-    assert request_json["keywords"][0] == "Mama Bisi" and "naira" in request_json["keywords"]
+    assert request_json["keywords"] == ["Mama Bisi", "naira"]
+    assert request_json["languageBias"] == ["Portuguese", "English"]
+
+    await MetaTranscriber(settings()).transcribe(make_wav())  # unknown language: let the model detect it
+    body = route.calls.last.request.content
+    request_json = json.loads(body.split(b'name="request"')[1].split(b"\r\n\r\n", 1)[1].split(b"\r\n--")[0])
+    assert "languageBias" not in request_json and "keywords" not in request_json
 
 
 @respx.mock
@@ -204,7 +211,7 @@ async def test_first_voice_note_with_spelled_out_amount_is_processed(db):
     transcriber = FakeTranscriber("Mama Bisi collect three bags rice, she go pay forty five thousand naira Friday")
     replies = await handle_voice_note(db, FakeProvider(script=[
         LLMResponse(content=None, tool_calls=[ToolCall("c1", "record_sale", {
-            "customer_name": "Mama Bisi", "item_description": "rice", "amount_naira": "forty five thousand naira",
+            "customer_name": "Mama Bisi", "item_description": "rice", "amount": "forty five thousand naira",
             "paid": False, "due_date": "Friday"})])
     ]), transcriber, "234802", b"a")
     assert "Welcome" in replies[0].text and "₦45,000" in replies[-1].text

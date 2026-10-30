@@ -23,7 +23,7 @@ from owobook.config import get_settings  # noqa: E402
 from owobook.dates import TZ, format_date, today_local  # noqa: E402
 from owobook.db import migrate, session_scope  # noqa: E402
 from owobook.models import Customer, Entry, EntryStatus, MessageLog, Trader, TraderSession  # noqa: E402
-from owobook.money import format_naira  # noqa: E402
+from owobook.money import format_money  # noqa: E402
 from owobook.reminders import REMINDER_TYPE  # noqa: E402
 
 K = 1000 * 100  # ₦1,000 in kobo
@@ -110,10 +110,10 @@ def main() -> None:
         print(f"Seeded trader {args.wa_id} ({trader.name}, {trader.shop_name}) for {format_date(today, today)}:\n")
         for d in ledger.list_debtors(db, trader, today=today):
             tag = "DUE TODAY" if d.due_today else "OVERDUE" if d.overdue else f"due {format_date(d.next_due, today)}"
-            print(f"  {d.customer.display_name:<12} owes {format_naira(d.balance_kobo):>9}  {tag}")
+            print(f"  {d.customer.display_name:<12} owes {format_money(d.balance_kobo):>9}  {tag}")
         week = ledger.sales_summary(db, trader, "this_week", today)
-        print(f"\n  This week: sales {format_naira(week.total_sales_kobo)}, collected {format_naira(week.collected_kobo)}, "
-              f"expenses {format_naira(week.expenses_kobo)}")
+        print(f"\n  This week: sales {format_money(week.total_sales_kobo)}, collected {format_money(week.collected_kobo)}, "
+              f"expenses {format_money(week.expenses_kobo)}")
 
 
 if __name__ == "__main__":

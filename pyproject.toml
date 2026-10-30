@@ -17,6 +17,7 @@ dependencies = [
     "tzdata>=2024.1",
     "imageio-ffmpeg>=0.6.0",
     "pillow>=13.0.0",
+    "fpdf2>=2.9.0",
 ]
 
 [dependency-groups]

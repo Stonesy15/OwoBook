@@ -175,7 +175,7 @@ def _draw(img: Image.Image, info: ReceiptInfo, lang: Lang) -> int:
         d.text((WIDTH / 2, y), line, font=_font(26), fill=INK, anchor="mt")
         y += 36
     y += 14
-    d.text((WIDTH / 2, y), "Made with Meta", font=_font(20), fill=MUTED, anchor="mt")
+    d.text((WIDTH / 2, y), "Powered by Meta AI", font=_font(20), fill=MUTED, anchor="mt")
     return y + 48
 
 

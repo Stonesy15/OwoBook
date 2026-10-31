@@ -5,6 +5,7 @@
 GET  /webhook  — Meta's one-time verification (hub.challenge)
 POST /webhook  — inbound messages. We check the signature, answer 200 at once, and process
                  each message in the background (Meta retries slow or failed webhooks).
+GET  /l/{token} — a trader's private, read-only ledger page (link sent in WhatsApp)
 POST /tasks/reminders — run today's reminders now (needs X-Task-Token = TASK_TOKEN)
 GET  /health   — for uptime checks and the deploy platform
 """
@@ -21,13 +22,15 @@ from typing import Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
+from owobook import currency, ledger_page
 from owobook.agent.handler import already_seen, handle_message, handle_photo, handle_unsupported, handle_voice_note
 from owobook.config import Settings, get_settings, mask_secret
 from owobook.llm import get_provider
 from owobook.llm.base import LLMProvider
+from owobook.models import Trader
 from owobook.reminders import run_reminders
 from owobook.transcribe import Transcriber, get_transcriber
 from owobook.whatsapp import formatting as fmt
@@ -111,6 +114,20 @@ def create_app(services: Services | None = None, run_migrations: bool = True) ->
     @app.get("/health")
     async def health() -> dict:
         return {"ok": True}
+
+    @app.get("/l/{token}")
+    async def ledger_view(token: str, request: Request) -> Response:
+        """Private ledger page. A bad or expired link gets the same page, so it says nothing about who exists."""
+        headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex"}
+        trader_id = ledger_page.read_token(token)
+        services: Services = request.app.state.services
+        with services.session_factory() as db:
+            trader = db.get(Trader, trader_id) if trader_id is not None else None
+            if trader is None:
+                return HTMLResponse(ledger_page.expired_page(), status_code=404, headers=headers)
+            with currency.use_currency(trader.currency):
+                html = ledger_page.render_page(db, trader)
+        return HTMLResponse(html, headers=headers)
 
     @app.post("/tasks/reminders")
     async def trigger_reminders(request: Request, background: BackgroundTasks) -> Response:

@@ -208,3 +208,10 @@ count against), week-by-week table, every transaction (latest 300), and a plain 
 self-reported and not audited. Sent as a WhatsApp document: `{"type": "document", "document": {"id",
 "filename", "caption"}}`, PDF ≤ 100 MB (docs checked 30 Oct 2026).
 
+## Private ledger page (31 Oct 2026)
+
+- "Show my ledger" → tool `ledger_link` → `https://<server>/l/<token>`. The token is `<trader id>.<expiry>.<HMAC-SHA256, 16 bytes>` (base 36 numbers, base64url signature), signed with a key derived from `LINK_SECRET` or `WA_APP_SECRET`. Nothing is stored; links expire after 7 days. A bad, expired or unknown link gets the same 404 page.
+- The server address comes from `PUBLIC_BASE_URL`, or `RENDER_EXTERNAL_URL`, which Render sets on every web service, so no dashboard change is needed. Without an address or secret the tool says the page isn't available.
+- Read-only by design: the page never changes data; WhatsApp stays the only way to write. It sends `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `noindex`, and refreshes every 15 s for the demo.
+- Limits: page labels are English only; a link can't be revoked before it expires (changing `LINK_SECRET` revokes all links).
+

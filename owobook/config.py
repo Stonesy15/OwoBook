@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     timezone: str = "Africa/Lagos"
     database_url: str = "sqlite:///./owobook.db"
     allowed_wa_ids: str = ""
+    # Public address for private ledger links; Render sets RENDER_EXTERNAL_URL by itself.
+    public_base_url: str = Field("", validation_alias=AliasChoices("PUBLIC_BASE_URL", "RENDER_EXTERNAL_URL"))
+    link_secret: str = ""  # signs ledger links; falls back to WA_APP_SECRET
 
     # LLM provider selection
     llm_provider: Literal["meta", "baseten", "fake"] = "meta"

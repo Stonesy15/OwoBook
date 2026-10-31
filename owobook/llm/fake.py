@@ -157,6 +157,10 @@ class FakeProvider:
             days = re.search(r"\b(30|60|90)\b", low)
             return self._call("business_record", days=int(days[1]) if days else None)
 
+        # Ledger page link: "show my ledger", "send me my book", "ledger link"
+        if re.search(r"\b(ledger|my book|my records)\b", low) and not amounts:
+            return self._call("ledger_link")
+
         # Picture receipt: "send me receipt", "receipt for Mama Bisi", "give Tunde receipt"
         if re.search(r"\b(receipt|rìsíìtì|risiti|rasit|risiit)\b", low) and not amounts:
             name = _known_customer_in(text, known)

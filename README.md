@@ -35,6 +35,7 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | "Send me receipt for Mama Bisi" | Sends a **picture receipt** to forward to the customer: what they bought, the amount paid, the balance still owing and the due date (or **PAID IN FULL**). Every number comes from the ledger |
 | "Chidi collect 2 cartons indomie 13k, he go pay Monday" *(Chidi has paid late before)* | The receipt adds a heads-up from Chidi's history: **"⚠️ Heads up: Chidi has paid late 3 of 4 times"**, and anything already overdue. "Can I give Chidi credit?" shows his payment record. Facts, not advice |
 | "Send me my business record" *(or "statement for 90 days")* | A **PDF statement** for the last 30/60/90 days: sales, money collected, expenses, credit owed, week-by-week totals, every transaction and how reliably customers repay. Something to show a bank, microfinance bank or cooperative |
+| "Show my ledger" | A **private link** to a read-only web page of the whole book: who owes you, overdue total, this week's sales and collections, recent records (with 🎙️/💬/📷 source). It refreshes itself, so a new voice note appears a few seconds later. Signed link, expires in 7 days, nothing to log in to |
 | 🎤 *"A Maria levou 3 sacos de arroz, vai pagar 450 reais na sexta"* from a +55 number | Detects Portuguese and Brazil: welcome, receipt, buttons and replies in Portuguese, amounts in **R$** |
 | "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
 | 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
@@ -223,7 +224,7 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 6. **Reminders (35s).** Say *"Mama Bisi number na 0803 123 4567"*. Trigger the morning job: "3 customers have debts due or overdue", then a polite message per customer. Tap **Send to Mama Bisi** and WhatsApp opens her chat with the reminder already typed. Forward the others with a long-press.
 7. **Old debt book (20s).** Snap a page of a paper debt book. OwoBook lists what it read, records each customer's debt, and asks about the one amount it couldn't read.
 8. **Who pays late (25s).** *"Iya Tola collect 1 bag rice 30k, she go pay Friday."* The receipt warns: "⚠️ Heads up: Iya Tola already has ₦32,000 overdue." Then *"Can I give Alhaji Musa credit?"* shows his payment record. "The decision every trader makes every day, now with data."
-9. **Business record for a loan (25s).** *"Send me my business record."* A PDF arrives: 30 days of sales, collections, credit owed, how reliably customers repay, every transaction. "Traders are refused loans for having no records. Now they have them."
+9. **Business record for a loan (25s).** *"Send me my business record."* A PDF arrives: 30 days of sales, collections, credit owed, how reliably customers repay, every transaction. "Traders are refused loans for having no records. Now they have them." Then *"show my ledger"*: open the private link on a laptop beside the phone, send one more voice note, and watch it appear on the page.
 10. **Global (15s).** A second phone: *"Minha moeda é real"*, then a Portuguese voice note — *"A Maria levou três sacos de arroz, vai pagar quatrocentos e cinquenta reais na sexta."* Welcome, receipt and buttons in Portuguese, R$ 450. (A real +55 number gets reais and Portuguese automatically.)
 11. **Under the hood (25s).** The architecture diagram: Muse Voice Transcribe → Muse Spark tool calls → Postgres. Then evals at 42/42 on Muse Spark, and about ₦10 per voice note.
 
@@ -240,6 +241,7 @@ owobook/
   vision.py            receipt / debt-book photos → lines, with Muse Spark vision
   receipt.py           picture receipts for customers (Pillow, bundled DejaVu font for ₦ and tone marks)
   business_record.py   the PDF statement for loans (fpdf2)
+  ledger_page.py       private read-only ledger page behind a signed 7-day link
   currency.py          currency from the phone's country code; money formatting per trader
   language.py          language detection and voice-note language hints
   script.py            Devanagari → Latin letters for pictures/PDFs
@@ -252,7 +254,7 @@ owobook/
   prompts/             the Muse Spark system prompt and the photo-reading prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
 evals/                 42 labelled Pidgin/English cases + runner
-tests/                 320 tests (money, currencies, languages, dates, ledger, trust, agent, photos, receipts, business record, webhook, reminders, usage)
+tests/                 335 tests (money, currencies, languages, dates, ledger, trust, agent, photos, receipts, business record, ledger page, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

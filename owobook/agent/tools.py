@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
-from owobook import business_record, currency, ledger, receipt
+from owobook import business_record, currency, ledger, ledger_page, receipt
 from owobook.dates import PERIODS, format_date, resolve_due_date, to_local, utcnow
 from owobook.models import Trader
 from owobook.money import format_money, line_total_kobo, naira_to_kobo, parse_amount
@@ -168,6 +168,12 @@ class BusinessRecordArgs(ToolArgs):
     days: int = Field(30, description="How many days back: 30, 60 or 90 (default 30).")
 
 
+class LedgerLink(ToolArgs):
+    """Send the trader a private link to a read-only web page of their ledger: who owes them, this week's sales
+    and recent records ("show my ledger", "send me my book", "I want to see my records", "ledger link").
+    Not for a single customer's balance (use get_customer_balance) or a PDF for a loan (use business_record)."""
+
+
 TOOL_MODELS: dict[str, type[BaseModel]] = {
     "record_sale": RecordSale,
     "record_payment": RecordPayment,
@@ -182,6 +188,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "save_customer_phone": SaveCustomerPhone,
     "make_receipt": MakeReceipt,
     "business_record": BusinessRecordArgs,
+    "ledger_link": LedgerLink,
 }
 
 
@@ -561,6 +568,15 @@ def _business_record(ctx: AgentContext, a: BusinessRecordArgs) -> ToolResult:
     )
 
 
+def _ledger_link(ctx: AgentContext, a: LedgerLink) -> ToolResult:
+    url = ledger_page.link_for(ctx.trader)
+    if url is None:
+        return ToolResult(data={"error": "ledger links are not set up on this server"},
+                          reply=Reply(fmt.t(ctx.lang, "ledger_link_off")), ends_turn=True)
+    return ToolResult(data={"ok": True, "sent_as": "link", "valid_days": ledger_page.LINK_DAYS},
+                      reply=Reply(fmt.t(ctx.lang, "ledger_link", url=url, days=ledger_page.LINK_DAYS)))
+
+
 _HANDLERS = {
     "record_sale": _record_sale,
     "record_payment": _record_payment,
@@ -575,6 +591,7 @@ _HANDLERS = {
     "save_customer_phone": _save_customer_phone,
     "make_receipt": _make_receipt,
     "business_record": _business_record,
+    "ledger_link": _ledger_link,
 }
 
 

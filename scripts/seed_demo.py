@@ -2,10 +2,15 @@
 
     uv run python scripts/seed_demo.py                          # trader = first ALLOWED_WA_IDS number
     uv run python scripts/seed_demo.py --wa-id 2348012345678 --reset
+    uv run python scripts/seed_demo.py --wa-id 2348012345678 --forget   # brand-new trader on the next "Hi"
+    uv run python scripts/seed_demo.py --wa-id 2348012345678 --add      # add the week to what's already there
 
 Dates are relative to today (Africa/Lagos), so there is always something due today, something
 overdue, something due later, a cleared customer, cash sales across the week and two expenses.
 --reset wipes that trader's ledger (entries, customers, today's reminder log) first.
+--forget deletes the trader completely and seeds nothing, so their next message gets the first-time
+welcome (for filming onboarding). Their usage rows stay, unlinked, so cost reports still add up.
+--add seeds on top of the trader's existing entries (e.g. after a live first voice note).
 """
 
 import argparse
@@ -15,14 +20,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import delete, func, select  # noqa: E402
+from sqlalchemy import delete, func, select, update  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from owobook import ledger  # noqa: E402
 from owobook.config import get_settings  # noqa: E402
 from owobook.dates import TZ, format_date, today_local  # noqa: E402
 from owobook.db import migrate, session_scope  # noqa: E402
-from owobook.models import Customer, Entry, EntryStatus, MessageLog, Trader, TraderSession  # noqa: E402
+from owobook.models import Customer, Entry, EntryStatus, MessageLog, Trader, TraderSession, UsageLog  # noqa: E402
 from owobook.money import format_money  # noqa: E402
 from owobook.reminders import REMINDER_TYPE  # noqa: E402
 
@@ -82,6 +87,20 @@ def reset(db: Session, trader: Trader) -> None:
     db.execute(delete(MessageLog).where(MessageLog.trader_id == trader.id, MessageLog.type == REMINDER_TYPE))
 
 
+def forget(db: Session, wa_id: str) -> bool:
+    """Delete a trader and everything that belongs to them. False if there was no such trader."""
+    trader = db.scalar(select(Trader).where(Trader.wa_id == wa_id))
+    if trader is None:
+        return False
+    db.execute(delete(TraderSession).where(TraderSession.trader_id == trader.id))
+    db.execute(delete(Entry).where(Entry.trader_id == trader.id))
+    db.execute(delete(Customer).where(Customer.trader_id == trader.id))
+    db.execute(delete(MessageLog).where(MessageLog.trader_id == trader.id))
+    db.execute(update(UsageLog).where(UsageLog.trader_id == trader.id).values(trader_id=None))
+    db.delete(trader)
+    return True
+
+
 def main() -> None:
     settings = get_settings()
     default_wa = next(iter(sorted(settings.allowed_wa_id_set)), "2348000000001")
@@ -89,16 +108,26 @@ def main() -> None:
     parser.add_argument("--wa-id", default=default_wa, help=f"trader's WhatsApp number (default {default_wa})")
     parser.add_argument("--name", default="Hosea")
     parser.add_argument("--shop", default="Hosea Provisions, Ikotun Market")
-    parser.add_argument("--reset", action="store_true", help="wipe this trader's ledger first")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--reset", action="store_true", help="wipe this trader's ledger first")
+    mode.add_argument("--add", action="store_true", help="seed on top of the trader's existing entries")
+    mode.add_argument("--forget", action="store_true", help="delete the trader completely; seed nothing")
     args = parser.parse_args()
 
     migrate()
     today = today_local()
+    if args.forget:
+        with session_scope() as db:
+            found = forget(db, args.wa_id)
+        print(f"Forgot trader {args.wa_id}: their next message gets the first-time welcome." if found
+              else f"No trader {args.wa_id} in this database; nothing to forget.")
+        return
     with session_scope() as db:
         trader, _ = ledger.get_or_create_trader(db, args.wa_id)
         existing = db.scalar(select(func.count()).select_from(Entry).where(Entry.trader_id == trader.id))
-        if existing and not args.reset:
-            sys.exit(f"Trader {args.wa_id} already has {existing} entries. Add --reset to wipe and re-seed.")
+        if existing and not (args.reset or args.add):
+            sys.exit(f"Trader {args.wa_id} already has {existing} entries. "
+                     "Add --reset to wipe and re-seed, or --add to seed on top.")
         if args.reset:
             reset(db, trader)
         trader.name = trader.name or args.name

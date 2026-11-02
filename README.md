@@ -214,7 +214,7 @@ Render's 750 free hours a month cover one service running all month. The in-proc
 
 ## Demo script (≈ 4½ minutes)
 
-*Setup:* the deployed bot, your phone on screen-share or mirrored, and `seed_demo.py --reset` run for your number.
+*Setup:* the deployed bot, your phone on screen-share or mirrored, and `seed_demo.py --reset` run for your number. To film onboarding from scratch instead, run `seed_demo.py --forget` first (your next "Hi" gets the first-time welcome), record the first voice note, then `seed_demo.py --add` to load the week around it.
 
 1. **The problem (20s).** A trader's notebook and a phone full of "I go pay you Friday" chats. "Lagos traders lose money to forgotten credit every week."
 2. **Log by voice (40s).** Record a Pidgin voice note: *"Mama Bisi collect 3 bags rice, she go pay 45k Friday."* The receipt arrives with the transcript, amount and due date. Tap **Correct ✓**.

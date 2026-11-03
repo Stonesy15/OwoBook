@@ -25,3 +25,6 @@ receipts/
 .DS_Store
 .idea/
 .vscode/
+
+# Demo video sources and renders (large files)
+video/

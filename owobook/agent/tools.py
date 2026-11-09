@@ -168,6 +168,89 @@ class BusinessRecordArgs(ToolArgs):
     days: int = Field(30, description="How many days back: 30, 60 or 90 (default 30).")
 
 
+class RecordPurchase(ToolArgs):
+    """Record goods the TRADER bought for the shop (stock), from a supplier or market: "I buy 10 bags rice
+    300k cash", "I collect 20 cartons indomie from Alhaji, I go pay him 150k Monday", "I take goods from
+    Mama Nkechi". paid=false when the trader still owes the supplier. Not for customers buying from the trader."""
+
+    supplier_name: str | None = Field(None, description="Who the trader bought from. Required when the trader still owes.")
+    item_description: str | None = Field(None, description="What was bought, e.g. 'rice'.")
+    quantity: float | None = Field(None, description="Number of units, e.g. 10. Goes into stock.")
+    unit: str | None = Field(None, description="Unit, e.g. 'bags', 'cartons'.")
+    amount: Amount | None = Field(None, validation_alias=_alias("amount"), description="TOTAL cost in the trader's currency.")
+    unit_price: Amount | None = Field(None, validation_alias=_alias("unit_price"), description="Cost PER UNIT ('each'); code multiplies.")
+    paid: bool = Field(description="true = the trader paid in full now; false = all or part still owed to the supplier.")
+    amount_paid: Amount | None = Field(None, validation_alias=_alias("amount_paid"), description="Part-payment: what the trader paid the supplier now.")
+    balance: Amount | None = Field(None, validation_alias=_alias("balance"), description="Part-payment: what the trader still owes for this.")
+    due_date: str | None = Field(None, description="When the trader will pay the supplier, as said: 'Monday', 'end of month'.")
+    new_supplier: bool = Field(False, description="true only if the trader confirmed this is a NEW person.")
+
+
+class RecordSupplierPayment(ToolArgs):
+    """Record money the TRADER paid a supplier towards what the trader owes them ("I don pay Alhaji 100k",
+    "I settle Mama Nkechi 50k"). Not for customers paying the trader (that is record_payment)."""
+
+    supplier_name: str
+    amount: Amount = Field(validation_alias=_alias("amount"))
+    new_supplier: bool = Field(False, description="true only if the trader confirmed this is a NEW person.")
+
+
+class ListCreditors(ToolArgs):
+    """List who the TRADER owes (suppliers), biggest first: "who I owe?", "how much I owe Alhaji?"."""
+
+    due_only: bool = Field(False, description="true to show only what is due today or overdue.")
+
+
+class UpdateStock(ToolArgs):
+    """Change stock without a purchase: add goods ("I get 20 bags rice for shop", "add 5 cartons"), count what
+    is left ("I get 17 bags rice remaining" → mode=set), or take out spoilt/used goods (mode=remove). Purchases
+    with a cost go through record_purchase instead; sales take stock out by themselves."""
+
+    item: str = Field(description="The item, e.g. 'rice'.")
+    quantity: float
+    unit: str | None = None
+    mode: Literal["add", "set", "remove"] = "add"
+
+
+class CheckStock(ToolArgs):
+    """How much stock is left: one item ("how many bags rice remain?") or everything ("show my stock")."""
+
+    item: str | None = Field(None, description="Leave out for all stock.")
+
+
+class RecordSaving(ToolArgs):
+    """Record the trader's savings: money put into ajo / esusu / adashe / a savings box or account ("I put 5k for
+    ajo today"), or a payout collected back ("I collect my ajo 60k" → payout=true)."""
+
+    amount: Amount = Field(validation_alias=_alias("amount"))
+    group: str | None = Field(None, description="Which savings: 'ajo', 'esusu', 'adashe', 'savings box', 'bank'. Leave out if not said.")
+    payout: bool = Field(False, description="true = money collected back out of the savings.")
+
+
+class GetSavings(ToolArgs):
+    """The trader's savings so far, per group (put in, collected, still in): "how much I don save?"."""
+
+
+class SaveNote(ToolArgs):
+    """Write down anything the trader wants remembered that is not a sale, payment, purchase or savings:
+    "note say supplier go come Tuesday", "remember Mama Bisi like the big bags", "write down: shop rent due
+    15th". Keep their words."""
+
+    text: str = Field(description="The note, in the trader's own words (without 'note say' / 'remember').")
+
+
+class FindNotes(ToolArgs):
+    """Find the trader's notes: "what did I note about the supplier?", "show my notes"."""
+
+    query: str | None = Field(None, description="Words to look for. Leave out for the latest notes.")
+
+
+class DeleteNote(ToolArgs):
+    """Remove a note ("delete that note"). Without note_id, the latest note is removed."""
+
+    note_id: int | None = None
+
+
 class LedgerLink(ToolArgs):
     """Send the trader a private link to a read-only web page of their ledger: who owes them, this week's sales
     and recent records ("show my ledger", "send me my book", "I want to see my records", "ledger link").
@@ -189,6 +272,16 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "make_receipt": MakeReceipt,
     "business_record": BusinessRecordArgs,
     "ledger_link": LedgerLink,
+    "record_purchase": RecordPurchase,
+    "record_supplier_payment": RecordSupplierPayment,
+    "list_creditors": ListCreditors,
+    "update_stock": UpdateStock,
+    "check_stock": CheckStock,
+    "record_saving": RecordSaving,
+    "get_savings": GetSavings,
+    "save_note": SaveNote,
+    "find_notes": FindNotes,
+    "delete_note": DeleteNote,
 }
 
 
@@ -364,7 +457,8 @@ def _record_sale(ctx: AgentContext, a: RecordSale) -> ToolResult:
             "due_date": entry.due_date.isoformat() if entry.due_date else None,
             "customer_total_owed": format_money(balance) if balance is not None else None,
         },
-        reply=fmt.sale_receipt(entry, entry.customer, balance, ctx.lang, ctx.today, notes),
+        reply=fmt.sale_receipt(entry, entry.customer, balance, ctx.lang, ctx.today, notes,
+                               ledger.stock_item_for(ctx.db, ctx.trader, entry)),
         entry_id=entry.id,
     )
 
@@ -422,8 +516,16 @@ def _get_customer_balance(ctx: AgentContext, a: GetCustomerBalance) -> ToolResul
             "paid_on_time": record.on_time,
             "paid_late": record.late,
         },
-        reply=fmt.balance_reply(debtor, ctx.lang, ctx.today, record),
+        reply=_with_owed(ctx, customer, fmt.balance_reply(debtor, ctx.lang, ctx.today, record)),
     )
+
+
+def _with_owed(ctx: AgentContext, person, reply: Reply) -> Reply:
+    """Add what the trader owes this person, when they are also a supplier."""
+    owed = ledger.supplier_balance(ctx.db, ctx.trader, person)
+    if owed > 0:
+        reply.text += "\n" + fmt.t(ctx.lang, "bal_you_owe", name=person.display_name, amount=format_money(owed))
+    return reply
 
 
 def _list_debtors(ctx: AgentContext, a: ListDebtors) -> ToolResult:
@@ -478,18 +580,30 @@ def _update_entry(ctx: AgentContext, a: UpdateEntry) -> ToolResult:
         paid=a.paid,
         **fields,
     )
-    balance = ledger.customer_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
     return ToolResult(
         data={"ok": True, "entry_id": entry.id, "amount": format_money(entry.amount_kobo)},
-        reply=fmt.receipt_for(entry, balance, ctx.lang, ctx.today),
+        reply=receipt_after_edit(ctx, entry),
         entry_id=entry.id,
     )
+
+
+def receipt_after_edit(ctx: AgentContext, entry) -> Reply:
+    """The right receipt for a just-changed entry of any type, with balances from the database."""
+    if entry.type in ("purchase", "supplier_payment"):
+        balance = ledger.supplier_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
+    else:
+        balance = ledger.customer_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
+    pot = _pot_for(ctx, entry.item_description) if entry.type in ("saving", "saving_payout") else None
+    return fmt.receipt_for(entry, balance, ctx.lang, ctx.today, ledger.stock_item_for(ctx.db, ctx.trader, entry), pot)
 
 
 def _delete_entry(ctx: AgentContext, a: DeleteEntry) -> ToolResult:
     entry = ledger.delete_entry(ctx.db, ctx.trader, a.entry_id)
     text = fmt.t(ctx.lang, "undone")
-    if entry.customer:
+    if entry.customer and entry.type in ("purchase", "supplier_payment"):
+        owed = ledger.supplier_balance(ctx.db, ctx.trader, entry.customer)
+        text += "\n" + fmt.owe_sentence(entry.customer.display_name, owed, ctx.lang)
+    elif entry.customer:
         balance = ledger.customer_balance(ctx.db, ctx.trader, entry.customer)
         text += "\n" + fmt.balance_sentence(entry.customer.display_name, balance, ctx.lang)
     return ToolResult(data={"ok": True, "deleted_entry_id": entry.id}, reply=Reply(text))
@@ -577,6 +691,116 @@ def _ledger_link(ctx: AgentContext, a: LedgerLink) -> ToolResult:
                       reply=Reply(fmt.t(ctx.lang, "ledger_link", url=url, days=ledger_page.LINK_DAYS)))
 
 
+def _record_purchase(ctx: AgentContext, a: RecordPurchase) -> ToolResult:
+    amount, paid_now = sale_amounts(a.amount, a.unit_price, a.quantity, a.amount_paid, a.balance)
+    if amount is None:
+        return _error("How much you buy am?")
+    if a.paid and not paid_now:
+        paid_now = amount
+    entry = ledger.record_purchase(
+        ctx.db, ctx.trader, amount_kobo=amount, paid_now_kobo=paid_now, supplier_name=a.supplier_name,
+        item_description=a.item_description, quantity=a.quantity, unit=a.unit,
+        due_date=None if paid_now >= amount else _due(a.due_date, ctx.today), new_supplier=a.new_supplier,
+        source=ctx.source, raw_text=ctx.raw_text,
+    )
+    owed = ledger.supplier_balance(ctx.db, ctx.trader, entry.customer) if entry.customer else None
+    stock = ledger.stock_item_for(ctx.db, ctx.trader, entry)
+    return ToolResult(
+        data={"ok": True, "entry_id": entry.id, "type": "purchase", "amount": format_money(entry.amount_kobo),
+              "supplier": entry.customer.display_name if entry.customer else None,
+              "trader_owes_supplier": format_money(owed) if owed is not None else None,
+              "stock_now": f"{stock.quantity:g} {stock.unit or ''}".strip() if stock else None},
+        reply=fmt.purchase_receipt(entry, owed, ctx.lang, ctx.today, stock),
+        entry_id=entry.id,
+    )
+
+
+def _record_supplier_payment(ctx: AgentContext, a: RecordSupplierPayment) -> ToolResult:
+    entry = ledger.record_supplier_payment(
+        ctx.db, ctx.trader, supplier_name=a.supplier_name, amount_kobo=to_kobo(a.amount),
+        new_supplier=a.new_supplier, source=ctx.source, raw_text=ctx.raw_text,
+    )
+    owed = ledger.supplier_balance(ctx.db, ctx.trader, entry.customer)
+    return ToolResult(
+        data={"ok": True, "entry_id": entry.id, "amount": format_money(entry.amount_kobo),
+              "supplier": entry.customer.display_name, "trader_still_owes": format_money(owed)},
+        reply=fmt.supplier_payment_receipt(entry, owed, ctx.lang),
+        entry_id=entry.id,
+    )
+
+
+def _list_creditors(ctx: AgentContext, a: ListCreditors) -> ToolResult:
+    creditors = ledger.list_creditors(ctx.db, ctx.trader, due_only=a.due_only, today=ctx.today)
+    return ToolResult(
+        data={"trader_owes": [{"name": c.supplier.display_name, "owed": format_money(c.owed_kobo), "overdue": c.overdue}
+                              for c in creditors]},
+        reply=fmt.creditors_reply(creditors, ctx.lang, ctx.today),
+    )
+
+
+def _update_stock(ctx: AgentContext, a: UpdateStock) -> ToolResult:
+    item, change = ledger.change_stock(ctx.db, ctx.trader, a.item, a.quantity, unit=a.unit, mode=a.mode)
+    text = fmt.t(ctx.lang, "stock_updated") + "\n\n" + fmt.stock_line(item, ctx.lang)
+    return ToolResult(data={"ok": True, "item": item.name, "change": change, "now": item.quantity, "unit": item.unit},
+                      reply=Reply(text))
+
+
+def _check_stock(ctx: AgentContext, a: CheckStock) -> ToolResult:
+    if a.item:
+        item = ledger.find_stock_item(ctx.db, ctx.trader, a.item)
+        if item is None:
+            return ToolResult(data={"item": a.item, "tracked": False},
+                              reply=Reply(fmt.t(ctx.lang, "stock_unknown", item=a.item)), ends_turn=True)
+        return ToolResult(data={"item": item.name, "quantity": item.quantity, "unit": item.unit},
+                          reply=Reply(fmt.stock_line(item, ctx.lang)))
+    items = ledger.list_stock(ctx.db, ctx.trader)
+    return ToolResult(data={"items": [{"item": i.name, "quantity": i.quantity, "unit": i.unit} for i in items]},
+                      reply=fmt.stock_reply(items, ctx.lang))
+
+
+def _pot_for(ctx: AgentContext, group: str | None):
+    key = ledger.normalize_name(group or "savings") or "savings"
+    return next((p for p in ledger.savings_summary(ctx.db, ctx.trader) if ledger.normalize_name(p.name) == key), None)
+
+
+def _record_saving(ctx: AgentContext, a: RecordSaving) -> ToolResult:
+    entry = ledger.record_saving(ctx.db, ctx.trader, amount_kobo=to_kobo(a.amount), group=a.group, payout=a.payout,
+                                 source=ctx.source, raw_text=ctx.raw_text)
+    pot = _pot_for(ctx, entry.item_description)
+    return ToolResult(
+        data={"ok": True, "entry_id": entry.id, "type": entry.type, "amount": format_money(entry.amount_kobo),
+              "group": entry.item_description, "still_saved": format_money(pot.balance_kobo) if pot else None},
+        reply=fmt.saving_receipt(entry, pot, ctx.lang),
+        entry_id=entry.id,
+    )
+
+
+def _get_savings(ctx: AgentContext, a: GetSavings) -> ToolResult:
+    pots = ledger.savings_summary(ctx.db, ctx.trader)
+    return ToolResult(
+        data={"savings": [{"group": p.name, "saved": format_money(p.saved_kobo), "collected": format_money(p.collected_kobo),
+                           "still_in": format_money(p.balance_kobo)} for p in pots]},
+        reply=fmt.savings_reply(pots, ctx.lang),
+    )
+
+
+def _save_note(ctx: AgentContext, a: SaveNote) -> ToolResult:
+    note = ledger.save_note(ctx.db, ctx.trader, a.text, source=ctx.source)
+    return ToolResult(data={"ok": True, "note_id": note.id}, reply=Reply(fmt.t(ctx.lang, "note_saved", text=note.text)))
+
+
+def _find_notes(ctx: AgentContext, a: FindNotes) -> ToolResult:
+    notes = ledger.find_notes(ctx.db, ctx.trader, a.query)
+    return ToolResult(data={"notes": [{"id": n.id, "text": n.text} for n in notes]},
+                      reply=fmt.notes_reply(notes, ctx.lang, ctx.today))
+
+
+def _delete_note(ctx: AgentContext, a: DeleteNote) -> ToolResult:
+    note = ledger.delete_note(ctx.db, ctx.trader, a.note_id)
+    return ToolResult(data={"ok": True, "deleted_note_id": note.id},
+                      reply=Reply(fmt.t(ctx.lang, "note_deleted", text=note.text)))
+
+
 _HANDLERS = {
     "record_sale": _record_sale,
     "record_payment": _record_payment,
@@ -592,6 +816,16 @@ _HANDLERS = {
     "make_receipt": _make_receipt,
     "business_record": _business_record,
     "ledger_link": _ledger_link,
+    "record_purchase": _record_purchase,
+    "record_supplier_payment": _record_supplier_payment,
+    "list_creditors": _list_creditors,
+    "update_stock": _update_stock,
+    "check_stock": _check_stock,
+    "record_saving": _record_saving,
+    "get_savings": _get_savings,
+    "save_note": _save_note,
+    "find_notes": _find_notes,
+    "delete_note": _delete_note,
 }
 
 

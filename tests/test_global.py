@@ -10,7 +10,7 @@ import respx
 
 from owobook import business_record, currency, ledger
 from owobook.agent.handler import handle_message
-from owobook.dates import resolve_due_date
+from owobook.dates import format_date, resolve_due_date
 from owobook.language import detect_language
 from owobook.llm.base import LLMResponse
 from owobook.llm.fake import FakeProvider
@@ -102,7 +102,7 @@ async def test_portuguese_voice_note_gets_portuguese_replies_in_reais(db):
     replies = await handle_message(db, FakeProvider(script=script), BRAZIL, msg_type="audio",
                                    text="A Maria levou 3 sacos de arroz, vai pagar 450 reais na sexta")
     assert "Bem-vindo ao OwoBook" in replies[0].text
-    assert "✅ Registrado" in replies[1].text and "R$ 450" in replies[1].text and "Fri, 6 Nov" in replies[1].text
+    assert "✅ Registrado" in replies[1].text and "R$ 450" in replies[1].text and format_date(resolve_due_date("Friday")) in replies[1].text
     trader, _ = ledger.get_or_create_trader(db, BRAZIL)
     assert trader.language_pref == "portuguese" and trader.currency == "BRL"
 

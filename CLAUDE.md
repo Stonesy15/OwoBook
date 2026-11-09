@@ -169,9 +169,10 @@ All money stored as **integer kobo** (₦1 = 100 kobo). Never floats. All timest
 
 - **traders**: id, wa_id (unique), name, shop_name, language_pref (`pidgin|english|yoruba|auto`), created_at, last_inbound_at (for 24h window), onboarded (bool)
 - **customers**: id, trader_id, display_name, normalized_name, phone (nullable), created_at. Unique per (trader_id, normalized_name). Fuzzy-match names ("Mama Bisi" vs "mama bisi" vs "Iya Bisi" → ask if unsure).
-- **entries** (the ledger): id, trader_id, customer_id (nullable for cash sales to unknown buyers), type (`cash_sale|credit_sale|payment|expense`), item_description, quantity (nullable), unit (nullable), amount_kobo, due_date (nullable), status (`pending|confirmed|deleted`), source (`voice|text|image`), raw_text (transcript), created_at, updated_at
+- **entries** (the ledger): id, trader_id, customer_id (nullable for cash sales to unknown buyers), type (`cash_sale|credit_sale|payment|expense|purchase|supplier_payment|saving|saving_payout`; for purchases `customer_id` is the supplier), item_description, quantity (nullable), unit (nullable), amount_kobo, due_date (nullable), status (`pending|confirmed|deleted`), source (`voice|text|image`), raw_text (transcript), created_at, updated_at
 - **messages_log**: id, trader_id, wa_message_id (unique, for dedupe), direction, type, content, created_at
 - **sessions**: trader_id, mode (`normal|editing`), editing_entry_id, updated_at
+- **notes**, **stock_items**, **stock_moves** (added 9 Nov 2026): notes are free text; stock moves link to the sale or purchase that caused them, so Undo / Fix it put stock right.
 - **usage_log**: id, trader_id, provider, model, input_tokens, output_tokens, audio_seconds, est_cost_usd, created_at — used to report **cost per voice note** (important for the business story).
 
 Customer balance = sum(credit_sale) − sum(payment) for confirmed+pending (non-deleted) entries.

@@ -42,6 +42,9 @@ def build_context(ctx: AgentContext) -> str:
         lines.append("NOTE: We don't know the trader's name yet. If they say it, call save_profile.")
     customers = ledger.list_customers(db, trader)[:200]
     lines.append("KNOWN_CUSTOMERS: " + (" | ".join(c.display_name for c in customers) or "(none yet)"))
+    stock = ledger.list_stock(db, trader)[:100]
+    if stock:
+        lines.append("STOCK_ITEMS: " + " | ".join(f"{i.name} ({i.quantity:g} {i.unit or ''})".replace(" )", ")") for i in stock))
     recent = ledger.recent_entries(db, trader, limit=5)
     if recent:
         lines.append("RECENT_ENTRIES (newest first):")

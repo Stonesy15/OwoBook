@@ -182,6 +182,59 @@ class FakeProvider:
                 shop_name=shop_m[1].strip() if shop_m else None,
             )
 
+        # Notes: "note say supplier go come Tuesday", "remember: …", "what did I note about the supplier?"
+        if m := re.match(r"^(?:note|remember|write down)(?:\s+(?:say|that))?\s*[:,-]?\s*(.+)$", text, re.I):
+            return self._call("save_note", text=m[1].strip())
+        if re.search(r"\b(delete|remove|cancel)\b.*\bnote\b", low):
+            return self._call("delete_note")
+        if re.search(r"\b(my notes|show notes|what did i note|wetin i note|notes about)\b", low):
+            about = re.search(r"\babout\s+(?:the\s+)?(.+?)[?.!]*$", low)
+            return self._call("find_notes", query=about[1] if about else None)
+
+        # Who the trader owes: "who I owe?", "how much I owe Alhaji?"
+        if re.search(r"\bwho\s+(?:do\s+)?i\s+(?:dey\s+)?owe\b|\bhow much i (?:dey )?owe\b|\bmy debts\b", low):
+            return self._call("list_creditors")
+
+        # Stock: "how many bags rice remain?", "show my stock", "I get 20 bags rice for shop", "17 bags rice remain"
+        if re.search(r"\bhow many\b.*\b(remain|left|dey)\b", low):
+            item = re.sub(rf"\b(how many|remain|left|dey|i get|do i have|are|is|{_UNITS})\b|[?.!]", " ", low)
+            return self._call("check_stock", item=re.sub(r"\s+", " ", item).strip() or None)
+        if re.search(r"\b(my stock|show stock|check stock|stock list)\b", low):
+            return self._call("check_stock")
+        if qty and qty[3] and not amounts and re.search(r"\b(for shop|for my shop|add to stock|remain|left|spoil|spoilt|use)\b", low):
+            mode = "set" if re.search(r"\b(remain|left)\b", low) else "remove" if re.search(r"\b(spoil|spoilt|use)\b", low) else "add"
+            return self._call("update_stock", item=qty[3].strip(), quantity=float(qty[1]), unit=qty[2].lower(), mode=mode)
+
+        # Savings: "I put 5k for ajo", "I collect my ajo 60k", "how much I don save?"
+        if re.search(r"\bhow much\b.*\b(save|saved|savings)\b", low):
+            return self._call("get_savings")
+        if amounts and (g := re.search(r"\b(ajo|esusu|adashe|savings?|save)\b", low)):
+            group = g[1] if g[1] in ("ajo", "esusu", "adashe") else None
+            payout = bool(re.search(r"\b(collect|withdraw|take out|receive)\b", low))
+            return self._call("record_saving", amount=amounts[0][2], group=group, payout=payout)
+
+        # The trader paying a supplier: "I don pay Alhaji 100k"
+        if amounts and (m := re.match(r"^i\s+(?:don\s+|have\s+)?(?:pay|paid|settle|settled)\s+(.+?)\s+[₦#]?\d", text, re.I)):
+            name = _known_customer_in(m[1], known) or _clean_name(m[1])
+            if name and not re.search(r"\bfor\b", m[1].lower()):
+                return self._call("record_supplier_payment", supplier_name=name, amount=amounts[0][2])
+
+        # The trader buying stock: "I buy 10 bags rice 300k", "I collect 20 cartons indomie from Alhaji, I go pay 150k Monday"
+        if re.match(r"^i\s+(?:buy|bought|collect(?:ed)?|take|took|get|got)\b", low) and (amounts or re.search(r"\bfrom\b", low)):
+            supplier = None
+            if m := re.search(r"\bfrom\s+([a-z][a-z ]*?)(?=\s*(?:[,.]|\d|[₦#]|\bfor\b|\bat\b|\bi\b|\bcash\b|$))", text, re.I):
+                supplier = _known_customer_in(m[1], known) or _clean_name(m[1])
+            owing = bool(re.search(r"\b(go pay|will pay|i owe|dey owe|balance|on credit)\b", low)) and not re.search(r"\bcash\b", low)
+            if not amounts:
+                return self._call("ask_clarification", question="How much you buy am?")
+            if owing and not supplier:
+                return self._call("ask_clarification", question="Who you buy am from?")
+            args = {"supplier_name": supplier, "paid": not owing, "due_date": due[1] if (due and owing) else None,
+                    "amount": amounts[0][2]}
+            if qty:
+                args.update(quantity=float(qty[1]), unit=qty[2].lower(), item_description=(qty[3] or "").strip() or None)
+            return self._call("record_purchase", **args)
+
         # Questions
         if re.search(r"\bwho\b.*\b(owe|owing)\b|\bdebtors?\b|\bwho never pay\b|\bwho neva pay\b", low):
             overdue = bool(re.search(r"overdue|late|don pass|due", low))

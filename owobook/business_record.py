@@ -33,6 +33,10 @@ TYPE_LABELS = {
     EntryType.CREDIT_SALE: "Credit sale",
     EntryType.PAYMENT: "Payment received",
     EntryType.EXPENSE: "Expense",
+    EntryType.PURCHASE: "Purchase",
+    EntryType.SUPPLIER_PAYMENT: "Paid supplier",
+    EntryType.SAVING: "Savings",
+    EntryType.SAVING_PAYOUT: "Savings payout",
 }
 
 
@@ -62,6 +66,9 @@ class BusinessRecord:
     repaid_late: int = 0
     weeks: list[WeekRow] = field(default_factory=list)
     since: date | None = None  # first record ever
+    purchases: int = 0  # stock bought in the period, cash or on credit
+    owed_to_suppliers: int = 0  # what the trader owes suppliers right now
+    savings: int = 0  # still in savings right now (put in − collected), all time
 
     @property
     def total_sales(self) -> int:
@@ -111,11 +118,15 @@ def build_record(db: Session, trader: Trader, days: int, today: date) -> Busines
         elif e.type == EntryType.EXPENSE:
             rec.expenses += e.amount_kobo
             week.expenses += e.amount_kobo
+        elif e.type == EntryType.PURCHASE:
+            rec.purchases += e.amount_kobo
     first = db.scalar(select(func.min(Entry.created_at)).where(Entry.trader_id == trader.id))
     rec.since = min(to_local(x).date() for x in (trader.created_at, first) if x)
     rec.active_days = len(active)
     rec.weeks = [weeks[k] for k in sorted(weeks)]
 
+    rec.owed_to_suppliers = sum(c.owed_kobo for c in ledger.list_creditors(db, trader, today=today))
+    rec.savings = sum(max(p.balance_kobo, 0) for p in ledger.savings_summary(db, trader))
     debtors = ledger.list_debtors(db, trader, today=today)
     rec.outstanding = sum(d.balance_kobo for d in debtors)
     rec.debtors = len(debtors)
@@ -205,6 +216,8 @@ def render_pdf(rec: BusinessRecord, generated_at: datetime) -> bytes:
     label_value("Money collected on credit (repayments + part-payments)", format_money(rec.collected))
     label_value("Money in (cash sales + money collected)", format_money(rec.money_in), bold=True)
     label_value("Business expenses recorded", format_money(rec.expenses))
+    if rec.purchases:
+        label_value("Stock bought (cash and on credit)", format_money(rec.purchases))
     label_value("Sales minus expenses", format_money(rec.total_sales - rec.expenses), bold=True)
     label_value("Days with recorded trading", f"{rec.active_days} of {rec.days}")
     label_value("Transactions recorded", str(len(rec.entries)))
@@ -220,6 +233,10 @@ def render_pdf(rec: BusinessRecord, generated_at: datetime) -> bytes:
         label_value("Customer debts paid by the due date (all history)", f"{pct}%  ({rec.repaid_on_time} of {repaid})")
     else:
         label_value("Customer debts paid by the due date (all history)", "No debts with due dates yet")
+    if rec.owed_to_suppliers or rec.savings:
+        heading("Suppliers and savings (today)")
+        label_value("Owed by the trader to suppliers", format_money(rec.owed_to_suppliers))
+        label_value("Savings (ajo, esusu and others) still in", format_money(rec.savings))
 
     table_style = FontFace(emphasis="BOLD", color=(255, 255, 255), fill_color=GREEN)
     zebra = dict(cell_fill_color=(246, 244, 238), cell_fill_mode="ROWS", borders_layout="HORIZONTAL_LINES")

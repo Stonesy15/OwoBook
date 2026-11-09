@@ -215,3 +215,12 @@ self-reported and not audited. Sent as a WhatsApp document: `{"type": "document"
 - Read-only by design: the page never changes data; WhatsApp stays the only way to write. It sends `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `noindex`, and refreshes every 15 s for the demo.
 - Limits: page labels are English only; a link can't be revoked before it expires (changing `LINK_SECRET` revokes all links).
 
+## Beyond credit sales: suppliers, stock, savings, notes (9 Nov 2026)
+
+- **Purchases and supplier payments reuse `entries`** (types `purchase`, `supplier_payment`), with the supplier in `customer_id`. What the trader owes = purchases − paid on the spot − supplier payments, worked out like customer debts (FIFO for due dates). Customer debts and supplier debts never mix: `list_debtors` only counts sales and payments; `list_creditors` only purchases and supplier payments.
+- **Pidgin direction**: "Mama Bisi collect…" is a customer buying; "I collect … from Alhaji" is the trader buying. The system prompt spells this out, and a live Muse Spark run got all 16 test messages right (purchase on credit with unit price, sale, stock check, supplier payment, "who I dey owe", ajo, esusu payout, savings total, note, note search, cash purchase, spoilt stock, stock list, debtors).
+- **Stock** is tracked only for items the trader has bought or counted, so ordinary sales of untracked goods change nothing. A sale deducts only when the units agree ("bags" vs "bag" match; "paint" vs "bags" don't — no unit conversion). Every change is a `stock_moves` row tied to its entry, so Undo and Fix it reverse it exactly.
+- **Savings** (`saving`, `saving_payout`) are grouped by name (ajo, esusu…). An esusu payout can come before the trader has paid it all in; that shows as "collected ₦X more than you've put in", and totals count only money still saved.
+- **Notes** are a separate table, searched by words (all words first, then any word).
+- Not done: unit conversion for stock (bags ↔ paints), supplier reminders drafted for the trader to send, savings by period.
+

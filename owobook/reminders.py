@@ -80,13 +80,28 @@ def _heads_up(debtors: list[Debtor], lang: Lang, today: date) -> str:
     return "\n".join(lines)
 
 
-def reminder_replies(db: Session, trader: Trader, debtors: list[Debtor], lang: Lang, today: date) -> list[Reply]:
+def _owe_block(payables: list[ledger.Creditor], lang: Lang, today: date) -> str:
+    """The trader's own payments to suppliers that are due today or overdue."""
+    lines = [fmt.t(lang, "r_owe_head")]
+    for c in payables:
+        tag = fmt.t(lang, "r_tag_today") if c.due_today else fmt.t(lang, "r_tag_since", date=format_date(c.next_due, today))
+        lines.append(f"• {c.supplier.display_name} — {format_money(c.owed_kobo)} · {tag}")
+    return "\n".join(lines)
+
+
+def reminder_replies(db: Session, trader: Trader, debtors: list[Debtor], lang: Lang, today: date,
+                     payables: list[ledger.Creditor] | None = None) -> list[Reply]:
     """Heads-up for the trader, then one draft per customer (at most MAX_DRAFTS). The trader forwards it, or,
-    if we have the customer's number, taps "Send to <name>" to open their own chat with it already typed."""
+    if we have the customer's number, taps "Send to <name>" to open their own chat with it already typed.
+    Suppliers the trader must pay today or is late paying are listed too."""
+    if payables is None:
+        payables = ledger.list_creditors(db, trader, due_only=True, today=today)
     if not debtors:
-        return [Reply(fmt.t(lang, "no_overdue"))]
+        return [Reply(_owe_block(payables, lang, today))] if payables else [Reply(fmt.t(lang, "no_overdue"))]
     shown = debtors[:MAX_DRAFTS]
     heads_up = _heads_up(debtors, lang, today)
+    if payables:
+        heads_up += "\n\n" + _owe_block(payables, lang, today)
     if not any(c.phone for c in ledger.list_customers(db, trader)):  # teach the one-tap send until they use it
         heads_up += "\n\n" + fmt.t(lang, "phone_tip", name=shown[0].customer.display_name)
     replies = [Reply(heads_up)]
@@ -174,13 +189,14 @@ async def run_reminders(
                 trader = db.get(Trader, trader_id)
                 currency.set_current(trader.currency)
                 debtors = debtors_due(db, trader, today)
-                if not debtors:
+                payables = ledger.list_creditors(db, trader, due_only=True, today=today)
+                if not debtors and not payables:
                     continue
                 if not force and not dry_run and already_reminded(db, trader, today):
                     results.append(ReminderResult(wa_id, "already_sent", len(debtors)))
                     continue
                 lang = fmt.reply_language(trader.language_pref)
-                replies = reminder_replies(db, trader, debtors, lang, today)
+                replies = reminder_replies(db, trader, debtors, lang, today, payables)
 
                 if dry_run:
                     results.append(ReminderResult(wa_id, "dry_run", len(debtors), replies))
@@ -190,7 +206,7 @@ async def run_reminders(
                         await whatsapp.send_reply(wa_id, reply)
                         _log(db, trader, reply.text)
                     results.append(ReminderResult(wa_id, "sent", len(debtors), replies))
-                elif settings.wa_reminder_template:
+                elif settings.wa_reminder_template and debtors:  # the template is about customers' debts
                     total = format_money(sum(d.balance_kobo for d in debtors))
                     params = [trader.name or "there", str(len(debtors)), total]
                     await whatsapp.send_template(

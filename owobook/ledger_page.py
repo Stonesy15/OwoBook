@@ -92,6 +92,17 @@ def _describe(e: Entry) -> str:
     item = fmt.item_line(e) or ""
     if e.type == EntryType.PAYMENT:
         return f"{who} paid"
+    if e.type == EntryType.PURCHASE:
+        owing = e.amount_kobo - e.paid_now_kobo
+        text = f"Bought {item}" if item else "Bought stock"
+        text += f" from {who}" if who else ""
+        return text + (f", owing {format_money(owing)}" if owing else "")
+    if e.type == EntryType.SUPPLIER_PAYMENT:
+        return f"Paid {who} (supplier)"
+    if e.type == EntryType.SAVING:
+        return f"Saved: {e.item_description or 'savings'}"
+    if e.type == EntryType.SAVING_PAYOUT:
+        return f"Collected from {e.item_description or 'savings'}"
     if e.type == EntryType.EXPENSE:
         return f"Expense: {item or e.item_description or ''}".strip()
     if e.type == EntryType.CASH_SALE:
@@ -121,7 +132,7 @@ def render_page(db: Session, trader: Trader, today: date | None = None) -> str:
     activity_rows = "".join(
         f"<tr><td class='when'>{to_local(e.created_at):%d %b, %H:%M}</td><td>{escape(_describe(e))}"
         f"<span class='src'>{_SOURCE.get(e.source, '')}</span></td>"
-        f"<td class='num {'in' if e.type == EntryType.PAYMENT else ''}'>{format_money(e.amount_kobo)}</td></tr>"
+        f"<td class='num {'in' if e.type in (EntryType.PAYMENT, EntryType.SAVING_PAYOUT) else ''}'>{format_money(e.amount_kobo)}</td></tr>"
         for e in recent
     ) or "<tr><td colspan='3' class='empty'>Nothing recorded yet. Send a voice note in WhatsApp.</td></tr>"
 

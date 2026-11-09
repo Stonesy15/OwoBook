@@ -72,7 +72,10 @@ def handle_button(db: Session, trader: Trader, button_id: str, lang: Lang) -> li
             ledger.delete_entry(db, trader, entry_id)
             ledger.stop_editing(db, trader)
             text = fmt.t(lang, "undone")
-            if entry.customer:
+            if entry.customer and entry.type in ("purchase", "supplier_payment"):
+                owed = ledger.supplier_balance(db, trader, entry.customer)
+                text += "\n" + fmt.owe_sentence(entry.customer.display_name, owed, lang)
+            elif entry.customer:
                 balance = ledger.customer_balance(db, trader, entry.customer)
                 text += "\n" + fmt.balance_sentence(entry.customer.display_name, balance, lang)
             return [Reply(text)]

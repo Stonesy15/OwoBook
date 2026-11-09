@@ -1,4 +1,5 @@
-"""Ledger business logic: record sales/payments/expenses, balances, debtors, summaries.
+"""Ledger business logic: sales, payments, expenses, purchases from suppliers, savings, stock and notes;
+balances, debtors, who the trader owes, summaries.
 
 Pure database logic — no LLM or WhatsApp calls here. Every function takes a SQLAlchemy
 session and a trader, so one trader can never see or touch another trader's ledger.
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from difflib import SequenceMatcher
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from owobook.currency import calling_code, currency_for_wa_id
@@ -21,7 +22,10 @@ from owobook.models import (
     EntrySource,
     EntryStatus,
     EntryType,
+    Note,
     SessionMode,
+    StockItem,
+    StockMove,
     Trader,
     TraderSession,
 )
@@ -239,7 +243,7 @@ def record_sale(
     customer = (
         resolve_customer(db, trader, customer_name, create=True, new_customer=new_customer) if customer_name else None
     )
-    return _new_entry(
+    entry = _new_entry(
         db,
         trader,
         now,
@@ -254,6 +258,8 @@ def record_sale(
         source=source,
         raw_text=raw_text,
     )
+    apply_stock(db, trader, entry)
+    return entry
 
 
 def _check_paid_now(amount_kobo: int, paid_now_kobo: int) -> None:
@@ -349,9 +355,8 @@ def update_entry(
     if entry.status == EntryStatus.DELETED:
         raise LedgerError("Entry was undone", question="That record don already cancel.")
     if customer_name:
-        entry.customer_id = resolve_customer(
-            db, trader, customer_name, create=entry.type != EntryType.PAYMENT or new_customer, new_customer=new_customer
-        ).id
+        creates = entry.type not in (EntryType.PAYMENT, EntryType.SUPPLIER_PAYMENT) or new_customer
+        entry.customer_id = resolve_customer(db, trader, customer_name, create=creates, new_customer=new_customer).id
     if item_description is not None:
         entry.item_description = item_description
     if quantity is not None:
@@ -368,19 +373,32 @@ def update_entry(
         entry.type = EntryType.CASH_SALE if paid else EntryType.CREDIT_SALE
         if paid:
             entry.due_date = None
-    if paid_now_kobo is not None and entry.type == EntryType.CREDIT_SALE:
-        entry.paid_now_kobo = paid_now_kobo
-    if entry.type == EntryType.CREDIT_SALE:
+    if entry.type == EntryType.PURCHASE:
+        if paid is not None:
+            entry.paid_now_kobo = entry.amount_kobo if paid else 0
+        if paid_now_kobo is not None:
+            entry.paid_now_kobo = paid_now_kobo
         _check_paid_now(entry.amount_kobo, entry.paid_now_kobo)
-        if entry.paid_now_kobo == entry.amount_kobo:  # fully paid after all → cash sale
-            entry.type, entry.due_date = EntryType.CASH_SALE, None
-    if entry.type != EntryType.CREDIT_SALE:
-        entry.paid_now_kobo = 0
-    if due_date is not _UNSET and entry.type == EntryType.CREDIT_SALE:
-        entry.due_date = due_date
+        if due_date is not _UNSET:
+            entry.due_date = due_date
+        if entry.paid_now_kobo == entry.amount_kobo:
+            entry.due_date = None
+    else:
+        if paid_now_kobo is not None and entry.type == EntryType.CREDIT_SALE:
+            entry.paid_now_kobo = paid_now_kobo
+        if entry.type == EntryType.CREDIT_SALE:
+            _check_paid_now(entry.amount_kobo, entry.paid_now_kobo)
+            if entry.paid_now_kobo == entry.amount_kobo:  # fully paid after all → cash sale
+                entry.type, entry.due_date = EntryType.CASH_SALE, None
+        if entry.type != EntryType.CREDIT_SALE:
+            entry.paid_now_kobo = 0
+        if due_date is not _UNSET and entry.type == EntryType.CREDIT_SALE:
+            entry.due_date = due_date
     entry.status = EntryStatus.PENDING
     entry.updated_at = utcnow()
     db.flush()
+    reverse_stock(db, trader, entry)  # quantity, item or unit may have changed
+    apply_stock(db, trader, entry)
     return entry
 
 
@@ -394,10 +412,11 @@ def confirm_entry(db: Session, trader: Trader, entry_id: int) -> Entry:
 
 
 def delete_entry(db: Session, trader: Trader, entry_id: int) -> Entry:
-    """Soft-delete (Undo). The row stays for the audit trail."""
+    """Soft-delete (Undo). The row stays for the audit trail; any stock it moved goes back."""
     entry = get_entry(db, trader, entry_id)
     entry.status = EntryStatus.DELETED
     entry.updated_at = utcnow()
+    reverse_stock(db, trader, entry)
     db.flush()
     return entry
 
@@ -450,30 +469,33 @@ def latest_receipt_entry(db: Session, trader: Trader, customer: Customer | None 
     return db.scalars(query.order_by(Entry.created_at.desc(), Entry.id.desc()).limit(1)).first()
 
 
-def outstanding_sales(db: Session, trader: Trader, customer: Customer) -> list[tuple[Entry, int]]:
-    """Credit sales not yet covered by payments, oldest first, as (entry, remaining_kobo).
-
-    Payments are applied to the oldest debts first (FIFO), which tells us which due dates still matter.
-    """
+def _outstanding(db: Session, trader: Trader, person: Customer, debt: str, paying: str) -> list[tuple[Entry, int]]:
+    """Debts (`debt` entries) not yet covered by `paying` entries, oldest first, as (entry, remaining_kobo).
+    Payments go to the oldest debt first (FIFO), which tells us which due dates still matter."""
     entries = db.scalars(
         select(Entry)
         .where(
             Entry.trader_id == trader.id,
-            Entry.customer_id == customer.id,
+            Entry.customer_id == person.id,
             Entry.status != EntryStatus.DELETED,
-            Entry.type.in_([EntryType.CREDIT_SALE, EntryType.PAYMENT]),
+            Entry.type.in_([debt, paying]),
         )
         .order_by(Entry.created_at, Entry.id)
     ).all()
-    paid = sum(e.amount_kobo for e in entries if e.type == EntryType.PAYMENT)
+    paid = sum(e.amount_kobo for e in entries if e.type == paying)
     out = []
-    for sale in (e for e in entries if e.type == EntryType.CREDIT_SALE):
-        owed = sale.amount_kobo - sale.paid_now_kobo
+    for item in (e for e in entries if e.type == debt):
+        owed = item.amount_kobo - item.paid_now_kobo
         covered = min(paid, owed)
         paid -= covered
         if owed - covered > 0:
-            out.append((sale, owed - covered))
+            out.append((item, owed - covered))
     return out
+
+
+def outstanding_sales(db: Session, trader: Trader, customer: Customer) -> list[tuple[Entry, int]]:
+    """Credit sales not yet covered by the customer's payments, oldest first."""
+    return _outstanding(db, trader, customer, EntryType.CREDIT_SALE, EntryType.PAYMENT)
 
 
 @dataclass
@@ -579,6 +601,9 @@ class SalesSummary:
     collected_kobo: int = 0
     expenses_kobo: int = 0
     sale_count: int = 0
+    purchases_kobo: int = 0  # stock bought, cash or on credit
+    supplier_paid_kobo: int = 0  # money paid to suppliers (on the spot or later)
+    saved_kobo: int = 0
 
     @property
     def total_sales_kobo(self) -> int:
@@ -600,7 +625,8 @@ def sales_summary(db: Session, trader: Trader, period: str, today: date | None =
     s = SalesSummary(period=period)
     for type_, total, count, paid_now in rows:
         total = int(total or 0)
-        s.collected_kobo += int(paid_now or 0)  # money paid on the spot for credit sales
+        if type_ == EntryType.CREDIT_SALE:
+            s.collected_kobo += int(paid_now or 0)  # money paid on the spot for credit sales
         if type_ == EntryType.CASH_SALE:
             s.cash_sales_kobo, s.sale_count = total, s.sale_count + count
         elif type_ == EntryType.CREDIT_SALE:
@@ -609,4 +635,328 @@ def sales_summary(db: Session, trader: Trader, period: str, today: date | None =
             s.collected_kobo += total
         elif type_ == EntryType.EXPENSE:
             s.expenses_kobo = total
+        elif type_ == EntryType.PURCHASE:
+            s.purchases_kobo = total
+            s.supplier_paid_kobo += int(paid_now or 0)
+        elif type_ == EntryType.SUPPLIER_PAYMENT:
+            s.supplier_paid_kobo += total
+        elif type_ == EntryType.SAVING:
+            s.saved_kobo = total
     return s
+
+
+# ---------- suppliers: what the trader owes ------------------------------------------------
+
+
+def record_purchase(
+    db: Session,
+    trader: Trader,
+    *,
+    amount_kobo: int,
+    paid_now_kobo: int,
+    supplier_name: str | None = None,
+    item_description: str | None = None,
+    quantity: float | None = None,
+    unit: str | None = None,
+    due_date: date | None = None,
+    new_supplier: bool = False,
+    source: str = EntrySource.TEXT,
+    raw_text: str | None = None,
+    now: datetime | None = None,
+) -> Entry:
+    """Record goods the trader bought. `paid_now_kobo` is what they paid on the spot (all of it for a cash
+    purchase); the rest is owed to the supplier. Bought items with a quantity go into stock."""
+    if amount_kobo <= 0:
+        raise LedgerError("Amount must be positive", question="How much you buy am?")
+    _check_paid_now(amount_kobo, paid_now_kobo)
+    owing = paid_now_kobo < amount_kobo
+    if owing and not supplier_name:
+        raise LedgerError("Credit purchase without supplier", question="Who you buy am from?")
+    supplier = (
+        resolve_customer(db, trader, supplier_name, create=True, new_customer=new_supplier) if supplier_name else None
+    )
+    entry = _new_entry(
+        db, trader, now,
+        customer_id=supplier.id if supplier else None,
+        type=EntryType.PURCHASE,
+        item_description=item_description,
+        quantity=quantity,
+        unit=unit,
+        amount_kobo=amount_kobo,
+        paid_now_kobo=paid_now_kobo,
+        due_date=due_date if owing else None,
+        source=source,
+        raw_text=raw_text,
+    )
+    apply_stock(db, trader, entry)
+    return entry
+
+
+def record_supplier_payment(
+    db: Session,
+    trader: Trader,
+    *,
+    supplier_name: str,
+    amount_kobo: int,
+    new_supplier: bool = False,
+    source: str = EntrySource.TEXT,
+    raw_text: str | None = None,
+    now: datetime | None = None,
+) -> Entry:
+    """Record money the trader paid a supplier towards what they owe."""
+    if amount_kobo <= 0:
+        raise LedgerError("Amount must be positive", question="How much you pay?")
+    supplier = resolve_customer(db, trader, supplier_name, create=new_supplier, new_customer=new_supplier)
+    return _new_entry(
+        db, trader, now,
+        customer_id=supplier.id, type=EntryType.SUPPLIER_PAYMENT, amount_kobo=amount_kobo,
+        source=source, raw_text=raw_text,
+    )
+
+
+_owed_to_supplier = case(
+    (Entry.type == EntryType.PURCHASE, Entry.amount_kobo - Entry.paid_now_kobo),
+    (Entry.type == EntryType.SUPPLIER_PAYMENT, -Entry.amount_kobo),
+    else_=0,
+)
+
+
+def supplier_balance(db: Session, trader: Trader, supplier: Customer) -> int:
+    """What the trader owes this supplier, in kobo (negative: the trader overpaid)."""
+    query = select(func.coalesce(func.sum(_owed_to_supplier), 0)).where(
+        Entry.trader_id == trader.id, Entry.customer_id == supplier.id, Entry.status != EntryStatus.DELETED,
+    )
+    return int(db.scalar(query) or 0)
+
+
+@dataclass
+class Creditor:
+    supplier: Customer
+    owed_kobo: int
+    next_due: date | None  # earliest due date among unpaid purchases
+    overdue: bool
+    due_today: bool
+
+
+def creditor_for(db: Session, trader: Trader, supplier: Customer, today: date | None = None) -> Creditor:
+    today = today or today_local()
+    dues = [e.due_date for e, _ in _outstanding(db, trader, supplier, EntryType.PURCHASE, EntryType.SUPPLIER_PAYMENT)
+            if e.due_date]
+    next_due = min(dues) if dues else None
+    return Creditor(supplier, supplier_balance(db, trader, supplier), next_due,
+                    bool(next_due and next_due < today), next_due == today)
+
+
+def list_creditors(db: Session, trader: Trader, *, due_only: bool = False, today: date | None = None) -> list[Creditor]:
+    """Suppliers the trader owes, biggest first; `due_only`: only what's due today or overdue."""
+    today = today or today_local()
+    rows = db.execute(
+        select(Customer, func.sum(_owed_to_supplier))
+        .join(Entry, Entry.customer_id == Customer.id)
+        .where(Entry.trader_id == trader.id, Entry.status != EntryStatus.DELETED)
+        .group_by(Customer.id)
+        .having(func.sum(_owed_to_supplier) > 0)
+    ).all()
+    creditors = [creditor_for(db, trader, supplier, today) for supplier, _ in rows]
+    if due_only:
+        creditors = [c for c in creditors if c.overdue or c.due_today]
+    return sorted(creditors, key=lambda c: (-c.owed_kobo, c.supplier.display_name))
+
+
+# ---------- savings: ajo, esusu, savings box ------------------------------------------------
+
+
+def record_saving(
+    db: Session,
+    trader: Trader,
+    *,
+    amount_kobo: int,
+    group: str | None = None,
+    payout: bool = False,
+    source: str = EntrySource.TEXT,
+    raw_text: str | None = None,
+    now: datetime | None = None,
+) -> Entry:
+    """Money put into savings (`payout=False`) or collected back out ("I collect my ajo 50k")."""
+    if amount_kobo <= 0:
+        raise LedgerError("Amount must be positive", question="How much?")
+    return _new_entry(
+        db, trader, now,
+        type=EntryType.SAVING_PAYOUT if payout else EntryType.SAVING,
+        item_description=(group or "savings").strip(), amount_kobo=amount_kobo, source=source, raw_text=raw_text,
+    )
+
+
+@dataclass
+class SavingsPot:
+    name: str
+    saved_kobo: int = 0
+    collected_kobo: int = 0
+
+    @property
+    def balance_kobo(self) -> int:
+        return self.saved_kobo - self.collected_kobo
+
+
+def savings_summary(db: Session, trader: Trader) -> list[SavingsPot]:
+    """Each savings pot (ajo, esusu, …): put in, collected out, still in. Biggest first."""
+    pots: dict[str, SavingsPot] = {}
+    for e in db.scalars(select(Entry).where(
+        Entry.trader_id == trader.id, Entry.status != EntryStatus.DELETED,
+        Entry.type.in_([EntryType.SAVING, EntryType.SAVING_PAYOUT]),
+    ).order_by(Entry.created_at, Entry.id)):
+        key = normalize_name(e.item_description or "savings") or "savings"
+        pot = pots.setdefault(key, SavingsPot(_display(e.item_description or "savings")))
+        if e.type == EntryType.SAVING:
+            pot.saved_kobo += e.amount_kobo
+        else:
+            pot.collected_kobo += e.amount_kobo
+    return sorted(pots.values(), key=lambda p: (-p.balance_kobo, p.name))
+
+
+# ---------- stock ----------------------------------------------------------------------------
+
+
+def _singular(word: str) -> str:
+    if len(word) > 3 and word.endswith("es") and word[-3] in "sxz":
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def stock_key(name: str | None) -> str:
+    """'Bags of Rice' → 'bag of rice'; 'eggs' → 'egg'. How stock items and units are compared."""
+    return " ".join(_singular(w) for w in normalize_name(name or "").split())
+
+
+def list_stock(db: Session, trader: Trader) -> list[StockItem]:
+    return list(db.scalars(select(StockItem).where(StockItem.trader_id == trader.id).order_by(StockItem.name)))
+
+
+def find_stock_item(db: Session, trader: Trader, name: str | None) -> StockItem | None:
+    """The stock item a name refers to: the same words, or the only item whose name is inside it
+    (or it inside the item's): 'indomie' finds 'indomie noodles'."""
+    key = stock_key(name)
+    if not key:
+        return None
+    items = list_stock(db, trader)
+    for item in items:
+        if item.normalized_name == key:
+            return item
+    words = set(key.split())
+    close = [i for i in items if set(i.normalized_name.split()) <= words or words <= set(i.normalized_name.split())]
+    return close[0] if len(close) == 1 else None
+
+
+def _units_match(a: str | None, b: str | None) -> bool:
+    return not a or not b or stock_key(a) == stock_key(b)
+
+
+def _move(db: Session, trader: Trader, item: StockItem, change: float, reason: str, entry: Entry | None = None) -> None:
+    item.quantity = round(item.quantity + change, 3)
+    item.updated_at = utcnow()
+    db.add(StockMove(trader_id=trader.id, item_id=item.id, entry_id=entry.id if entry else None,
+                     change=change, reason=reason))
+    db.flush()
+
+
+def change_stock(db: Session, trader: Trader, name: str, quantity: float, *, unit: str | None = None,
+                 mode: str = "add") -> tuple[StockItem, float]:
+    """Restock ("add"), count ("set": "I get 17 bags rice remaining") or take out ("remove": spoilt, used).
+    Creates the item on first add or count. Returns (item, change)."""
+    if quantity is None or quantity < 0 or (mode != "set" and quantity == 0):
+        raise LedgerError("Bad quantity", question="How many?")
+    item = find_stock_item(db, trader, name)
+    if item is None:
+        if mode == "remove":
+            raise LedgerError(f"No stock item {name!r}", question=f"I no get {name} for your stock. Which item?")
+        item = StockItem(trader_id=trader.id, name=_display(name), normalized_name=stock_key(name), unit=unit, quantity=0)
+        db.add(item)
+        db.flush()
+    if unit and not item.unit:
+        item.unit = unit
+    change = {"add": quantity, "remove": -quantity, "set": quantity - item.quantity}[mode]
+    _move(db, trader, item, change, {"add": "restock", "remove": "remove", "set": "count"}[mode])
+    return item, change
+
+
+def apply_stock(db: Session, trader: Trader, entry: Entry) -> StockItem | None:
+    """A sale takes its quantity out of stock, if that item is tracked and the units agree. A purchase puts
+    its quantity in, creating the item if needed. Returns the item that moved."""
+    if entry.status == EntryStatus.DELETED or not entry.quantity or not entry.item_description:
+        return None
+    if entry.type in (EntryType.CASH_SALE, EntryType.CREDIT_SALE):
+        item = find_stock_item(db, trader, entry.item_description)
+        if item and _units_match(item.unit, entry.unit):
+            _move(db, trader, item, -entry.quantity, "sale", entry)
+            return item
+    elif entry.type == EntryType.PURCHASE:
+        item = find_stock_item(db, trader, entry.item_description)
+        if item is None:
+            item = StockItem(trader_id=trader.id, name=_display(entry.item_description),
+                             normalized_name=stock_key(entry.item_description), unit=entry.unit, quantity=0)
+            db.add(item)
+            db.flush()
+        if _units_match(item.unit, entry.unit):
+            item.unit = item.unit or entry.unit
+            _move(db, trader, item, entry.quantity, "restock", entry)
+            return item
+    return None
+
+
+def reverse_stock(db: Session, trader: Trader, entry: Entry) -> None:
+    """Put back whatever stock this entry moved (on Undo, or before re-applying a fixed entry)."""
+    for move in db.scalars(select(StockMove).where(StockMove.trader_id == trader.id, StockMove.entry_id == entry.id)):
+        item = db.get(StockItem, move.item_id)
+        item.quantity = round(item.quantity - move.change, 3)
+        db.delete(move)
+    db.flush()
+
+
+def stock_item_for(db: Session, trader: Trader, entry: Entry) -> StockItem | None:
+    """The stock item this entry moved, if any (for the receipt's "left" line)."""
+    move = db.scalars(select(StockMove).where(StockMove.trader_id == trader.id, StockMove.entry_id == entry.id)).first()
+    return db.get(StockItem, move.item_id) if move else None
+
+
+# ---------- notes ----------------------------------------------------------------------------
+
+
+def save_note(db: Session, trader: Trader, text: str, *, source: str = EntrySource.TEXT,
+              now: datetime | None = None) -> Note:
+    text = (text or "").strip()
+    if not text:
+        raise LedgerError("Empty note", question="Wetin I go write down?")
+    note = Note(trader_id=trader.id, text=text, source=source, created_at=now or utcnow())
+    db.add(note)
+    db.flush()
+    return note
+
+
+_STOP = {"the", "and", "for", "what", "did", "about", "note", "notes", "my", "i", "a", "an", "of", "to", "wey", "dey",
+         "na", "say", "abeg", "show", "me", "all", "find"}
+
+
+def find_notes(db: Session, trader: Trader, query: str | None = None, limit: int = 10) -> list[Note]:
+    """Notes containing every word of the query (or any word, if none has them all); newest first."""
+    base = select(Note).where(Note.trader_id == trader.id, Note.deleted.is_(False)).order_by(Note.created_at.desc(), Note.id.desc())
+    words = [w for w in normalize_name(query or "").split() if w not in _STOP and len(w) > 1]
+    if not words:
+        return list(db.scalars(base.limit(limit)))
+    every = list(db.scalars(base.where(*[Note.text.ilike(f"%{w}%") for w in words]).limit(limit)))
+    if every:
+        return every
+    return list(db.scalars(base.where(or_(*[Note.text.ilike(f"%{w}%") for w in words])).limit(limit)))
+
+
+def delete_note(db: Session, trader: Trader, note_id: int | None = None) -> Note:
+    """Remove a note (the latest one when no id is given)."""
+    query = select(Note).where(Note.trader_id == trader.id, Note.deleted.is_(False))
+    query = query.where(Note.id == note_id) if note_id else query.order_by(Note.created_at.desc(), Note.id.desc())
+    note = db.scalars(query).first()
+    if note is None:
+        raise LedgerError("No such note", question="I no see that note.")
+    note.deleted = True
+    db.flush()
+    return note

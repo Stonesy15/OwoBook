@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from urllib.parse import quote
 
-from owobook.dates import format_date, today_local
-from owobook.ledger import Debtor, PaymentRecord, SalesSummary
-from owobook.models import Customer, Entry, EntryType
+from owobook.dates import format_date, to_local, today_local
+from owobook.ledger import Creditor, Debtor, PaymentRecord, SalesSummary, SavingsPot
+from owobook.models import Customer, Entry, EntryType, Note, StockItem
 from owobook.money import format_money
 from owobook.whatsapp.i18n import LANGUAGES, STRINGS
 
@@ -128,9 +128,18 @@ def trust_line(record: PaymentRecord, lang: Lang) -> str:
     return t(lang, "trust_record", on_time=record.on_time, total=record.total)
 
 
+def stock_line(item: StockItem | None, lang: Lang) -> str | None:
+    """'📦 Rice: 17 bags left', or a warning when it has run out."""
+    if item is None:
+        return None
+    if item.quantity <= 0:
+        return t(lang, "stock_out", item=item.name)
+    return t(lang, "stock_left", item=item.name, qty=" ".join(x for x in (_qty(item.quantity), item.unit or "") if x))
+
+
 def sale_receipt(
     entry: Entry, customer: Customer | None, balance_kobo: int | None, lang: Lang, today: date | None = None,
-    notes: list[str] | None = None,
+    notes: list[str] | None = None, stock: StockItem | None = None,
 ) -> Reply:
     lines = [t(lang, "recorded"), ""]
     if customer:
@@ -155,6 +164,8 @@ def sale_receipt(
         lines.append(f"💰 {format_money(entry.amount_kobo)} — {t(lang, 'paid_cash')}")
     if customer and balance_kobo is not None and entry.type == EntryType.CREDIT_SALE:
         lines += ["", balance_sentence(customer.display_name, balance_kobo, lang, total=True)]
+    if line := stock_line(stock, lang):
+        lines += ["", line]
     if notes:
         lines += ["", *notes]
     if customer and entry.type == EntryType.CREDIT_SALE and entry.paid_now_kobo:
@@ -181,13 +192,74 @@ def expense_receipt(entry: Entry, lang: Lang) -> Reply:
     return Reply("\n".join(lines), entry_buttons(entry.id, lang))
 
 
-def receipt_for(entry: Entry, balance_kobo: int | None, lang: Lang, today: date | None = None) -> Reply:
-    """Pick the right receipt for any entry type (used after edits)."""
+def owe_sentence(name: str, owed_kobo: int, lang: Lang) -> str:
+    """What the trader owes a supplier, after a purchase or a payment to them."""
+    if owed_kobo > 0:
+        return t(lang, "you_owe_total", name=name, amount=format_money(owed_kobo))
+    if owed_kobo == 0:
+        return t(lang, "you_owe_cleared", name=name)
+    return t(lang, "you_overpaid", name=name, amount=format_money(-owed_kobo))
+
+
+def purchase_receipt(entry: Entry, owed_kobo: int | None, lang: Lang, today: date | None = None,
+                     stock: StockItem | None = None) -> Reply:
+    lines = [t(lang, "purchase_recorded"), ""]
+    if entry.customer:
+        lines.append(f"🏪 {entry.customer.display_name}")
+    if item := item_line(entry):
+        lines.append(f"📦 {item}")
+    owing = entry.amount_kobo - entry.paid_now_kobo
+    if owing and entry.paid_now_kobo:
+        lines += [
+            f"💰 {format_money(entry.amount_kobo)} {t(lang, 'sale_total')}",
+            f"💵 {format_money(entry.paid_now_kobo)} {t(lang, 'paid_now')}",
+            f"⏳ {format_money(owing)} — {t(lang, 'you_owe')}",
+        ]
+    elif owing:
+        lines.append(f"💰 {format_money(entry.amount_kobo)} — {t(lang, 'you_owe')}")
+    else:
+        lines.append(f"💰 {format_money(entry.amount_kobo)} — {t(lang, 'paid_cash')}")
+    if owing:
+        lines.append(f"📅 {t(lang, 'due')}: {format_date(entry.due_date, today)}" if entry.due_date else f"📅 {t(lang, 'no_due')}")
+    if entry.customer and owed_kobo is not None and owing:
+        lines += ["", owe_sentence(entry.customer.display_name, owed_kobo, lang)]
+    if line := stock_line(stock, lang):
+        lines += ["", line]
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
+
+
+def supplier_payment_receipt(entry: Entry, owed_kobo: int, lang: Lang) -> Reply:
+    lines = [t(lang, "supplier_paid"), "", f"🏪 {entry.customer.display_name}",
+             f"💸 {format_money(entry.amount_kobo)} {t(lang, 'paid_out')}", "",
+             owe_sentence(entry.customer.display_name, owed_kobo, lang)]
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
+
+
+def saving_receipt(entry: Entry, pot: SavingsPot | None, lang: Lang) -> Reply:
+    key = "payout_recorded" if entry.type == EntryType.SAVING_PAYOUT else "saving_recorded"
+    lines = [t(lang, key), "", f"🏦 {pot.name if pot else entry.item_description}", f"💰 {format_money(entry.amount_kobo)}"]
+    if pot is not None and pot.balance_kobo < 0:  # esusu: your turn to collect can come before you've paid it all in
+        lines += ["", t(lang, "saving_ahead", group=pot.name, amount=format_money(-pot.balance_kobo))]
+    elif pot is not None:
+        lines += ["", t(lang, "saving_balance", group=pot.name, amount=format_money(pot.balance_kobo))]
+    return Reply("\n".join(lines), entry_buttons(entry.id, lang))
+
+
+def receipt_for(entry: Entry, balance_kobo: int | None, lang: Lang, today: date | None = None,
+                stock: StockItem | None = None, pot: SavingsPot | None = None) -> Reply:
+    """Pick the right receipt for any entry type (used after edits). `balance_kobo` is what the customer
+    owes the trader, or for purchases and supplier payments what the trader owes the supplier."""
     if entry.type == EntryType.PAYMENT:
         return payment_receipt(entry, entry.customer, balance_kobo or 0, lang)
     if entry.type == EntryType.EXPENSE:
         return expense_receipt(entry, lang)
-    return sale_receipt(entry, entry.customer, balance_kobo, lang, today)
+    if entry.type == EntryType.PURCHASE:
+        return purchase_receipt(entry, balance_kobo, lang, today, stock)
+    if entry.type == EntryType.SUPPLIER_PAYMENT:
+        return supplier_payment_receipt(entry, balance_kobo or 0, lang)
+    if entry.type in (EntryType.SAVING, EntryType.SAVING_PAYOUT):
+        return saving_receipt(entry, pot, lang)
+    return sale_receipt(entry, entry.customer, balance_kobo, lang, today, stock=stock)
 
 
 # ---------- answers to questions ----------------------------------------------------------
@@ -240,6 +312,58 @@ def debtors_reply(debtors: list[Debtor], lang: Lang, *, overdue_only: bool = Fal
     return Reply("\n".join(lines))
 
 
+def creditors_reply(creditors: list[Creditor], lang: Lang, today: date | None = None) -> Reply:
+    """Who the trader owes: suppliers, biggest first, with due dates."""
+    today = today or today_local()
+    if not creditors:
+        return Reply(t(lang, "no_creditors"))
+    lines = [t(lang, "creditors_title", count=len(creditors)), ""]
+    for i, c in enumerate(creditors, 1):
+        line = f"{i}. {c.supplier.display_name} — {format_money(c.owed_kobo)}"
+        if c.overdue:
+            line += f" · ⚠️ {format_date(c.next_due, today)}"
+        elif c.due_today:
+            line += f" · {t(lang, 'list_today')}"
+        elif c.next_due:
+            line += f" · {t(lang, 'list_due', date=format_date(c.next_due, today))}"
+        lines.append(line)
+    lines += ["", f"{t(lang, 'total')}: {format_money(sum(c.owed_kobo for c in creditors))}"]
+    return Reply("\n".join(lines))
+
+
+def stock_reply(items: list[StockItem], lang: Lang) -> Reply:
+    if not items:
+        return Reply(t(lang, "stock_none"))
+    lines = [t(lang, "stock_title", count=len(items)), ""]
+    for item in items:
+        qty = " ".join(x for x in (_qty(item.quantity), item.unit or "") if x)
+        lines.append(f"• {item.name} — {qty}" + (" ⚠️" if item.quantity <= 0 else ""))
+    return Reply("\n".join(lines))
+
+
+def savings_reply(pots: list[SavingsPot], lang: Lang) -> Reply:
+    if not pots:
+        return Reply(t(lang, "savings_none"))
+    lines = [t(lang, "savings_title"), ""]
+    for pot in pots:
+        money = {"group": pot.name, "saved": format_money(pot.saved_kobo), "collected": format_money(pot.collected_kobo)}
+        if pot.balance_kobo < 0:
+            lines.append(t(lang, "savings_line_ahead", ahead=format_money(-pot.balance_kobo), **money))
+        else:
+            lines.append(t(lang, "savings_line", left=format_money(pot.balance_kobo), **money))
+    lines += ["", t(lang, "savings_total", amount=format_money(sum(max(p.balance_kobo, 0) for p in pots)))]
+    return Reply("\n".join(lines))
+
+
+def notes_reply(notes: list[Note], lang: Lang, today: date | None = None) -> Reply:
+    if not notes:
+        return Reply(t(lang, "notes_none"))
+    today = today or today_local()
+    lines = [t(lang, "notes_title", count=len(notes)), ""]
+    lines += [f"• {format_date(to_local(n.created_at).date(), today)}: {n.text}" for n in notes]
+    return Reply("\n".join(lines))
+
+
 def summary_reply(s: SalesSummary, lang: Lang) -> Reply:
     rows = [
         f"📊 {t(lang, 'p_' + s.period)}",
@@ -251,6 +375,10 @@ def summary_reply(s: SalesSummary, lang: Lang) -> Reply:
     ]
     if s.expenses_kobo:
         rows.append(t(lang, "s_expenses", amount=format_money(s.expenses_kobo)))
+    if s.purchases_kobo:
+        rows.append(t(lang, "s_purchases", amount=format_money(s.purchases_kobo)))
+    if s.saved_kobo:
+        rows.append(t(lang, "s_saved", amount=format_money(s.saved_kobo)))
     return Reply("\n".join(rows))
 
 

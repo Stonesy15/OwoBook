@@ -36,6 +36,10 @@ OwoBook is a WhatsApp number. No app, no form, no typing. The trader just talks.
 | "Chidi collect 2 cartons indomie 13k, he go pay Monday" *(Chidi has paid late before)* | The receipt adds a heads-up from Chidi's history: **"⚠️ Heads up: Chidi has paid late 3 of 4 times"**, and anything already overdue. "Can I give Chidi credit?" shows his payment record. Facts, not advice |
 | "Send me my business record" *(or "statement for 90 days")* | A **PDF statement** for the last 30/60/90 days: sales, money collected, expenses, credit owed, week-by-week totals, every transaction and how reliably customers repay. Something to show a bank, microfinance bank or cooperative |
 | "Show my ledger" | A **private link** to a read-only web page of the whole book: who owes you, overdue total, this week's sales and collections, recent records (with 🎙️/💬/📷 source). It refreshes itself, so a new voice note appears a few seconds later. Signed link, expires in 7 days, nothing to log in to |
+| "I collect 20 bags rice from Alhaji, I go pay 600k Monday" | A **purchase**: what you bought and from whom, what you paid and what you **owe the supplier**, with a due date. "I don pay Alhaji 200k" records paying them back; "Who I owe?" lists your own debts. Suppliers you must pay today show up in the morning reminder too |
+| "How many bags rice remain?" | **Stock**: purchases add to it and sales take from it by themselves, so the sale receipt says "📦 Rice: 17 bags left". "I get 20 bags rice for shop", "17 bags rice remain" (a count) and "2 bags don spoil" adjust it; Undo and Fix it put stock right |
+| "I put 5k for ajo" | **Savings**: ajo, esusu, adashe or a savings box. "I collect my esusu 50k" records a payout; "How much I don save?" shows each pot |
+| "Note say the rice man go come Thursday" | A **note** for anything that isn't money. "Wetin I note about the rice man?" finds it |
 | 🎤 *"A Maria levou 3 sacos de arroz, vai pagar 450 reais na sexta"* from a +55 number | Detects Portuguese and Brazil: welcome, receipt, buttons and replies in Portuguese, amounts in **R$** |
 | "Tutu number na 0803 123 4567" *(or share Tutu's contact card)* | Saves Tutu's number for one-tap reminders |
 | 08:00 every day | Sends the trader a list of debts due today or overdue, plus a polite reminder for each customer. The trader forwards it, or taps **Send to Tutu** to open their own chat with Tutu, message already typed |
@@ -254,7 +258,7 @@ owobook/
   prompts/             the Muse Spark system prompt and the photo-reading prompt
 scripts/               simulate, seed_demo, run_reminders, cost_report
 evals/                 42 labelled Pidgin/English cases + runner
-tests/                 335 tests (money, currencies, languages, dates, ledger, trust, agent, photos, receipts, business record, ledger page, webhook, reminders, usage)
+tests/                 351 tests (money, currencies, languages, dates, ledger, trust, agent, photos, receipts, business record, ledger page, suppliers, stock, savings, notes, webhook, reminders, usage)
 ```
 
 More detail on decisions and API findings is in [`docs/NOTES.md`](docs/NOTES.md).

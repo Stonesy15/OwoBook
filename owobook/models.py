@@ -39,8 +39,12 @@ class Language(StrEnum):
 class EntryType(StrEnum):
     CASH_SALE = "cash_sale"
     CREDIT_SALE = "credit_sale"
-    PAYMENT = "payment"
+    PAYMENT = "payment"  # a customer paid the trader
     EXPENSE = "expense"
+    PURCHASE = "purchase"  # the trader bought goods (stock); owing to the supplier = amount − paid_now
+    SUPPLIER_PAYMENT = "supplier_payment"  # the trader paid a supplier what they owed
+    SAVING = "saving"  # money put into ajo / esusu / savings
+    SAVING_PAYOUT = "saving_payout"  # money collected back out of ajo / esusu / savings
 
 
 class EntryStatus(StrEnum):
@@ -91,7 +95,8 @@ class Customer(Base):
 
 
 class Entry(Base):
-    """One line in the ledger: a cash sale, credit sale, payment or expense."""
+    """One line in the ledger: a sale, payment, expense, purchase from a supplier, or savings.
+    `customer` is the other person: the customer for sales, the supplier for purchases."""
 
     __tablename__ = "entries"
 
@@ -103,7 +108,7 @@ class Entry(Base):
     quantity: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str | None] = mapped_column(String(32))
     amount_kobo: Mapped[int] = mapped_column(BigInteger)
-    # Credit sales only: money paid on the spot ("he give me 60k, balance 70k"). Owing = amount − paid_now.
+    # Credit sales and purchases: money paid on the spot ("he give me 60k, balance 70k"). Owing = amount − paid_now.
     paid_now_kobo: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     due_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(16), default=EntryStatus.PENDING)
@@ -113,6 +118,51 @@ class Entry(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     customer: Mapped[Customer | None] = relationship()
+
+
+class Note(Base):
+    """Anything the trader wants remembered that isn't money: "supplier coming Tuesday"."""
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trader_id: Mapped[int] = mapped_column(ForeignKey("traders.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16), default=EntrySource.TEXT)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StockItem(Base):
+    """One thing the trader keeps in stock, with how many are left. Only items the trader has
+    restocked or counted are tracked; sales of other items don't touch stock."""
+
+    __tablename__ = "stock_items"
+    __table_args__ = (UniqueConstraint("trader_id", "normalized_name", name="uq_stock_trader_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trader_id: Mapped[int] = mapped_column(ForeignKey("traders.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    normalized_name: Mapped[str] = mapped_column(String(120))
+    unit: Mapped[str | None] = mapped_column(String(32))
+    quantity: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class StockMove(Base):
+    """A change to a stock item's quantity: a restock, a sale, or a count. Sale and purchase moves keep
+    their entry, so undoing or fixing the entry puts the stock right again."""
+
+    __tablename__ = "stock_moves"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trader_id: Mapped[int] = mapped_column(ForeignKey("traders.id"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("stock_items.id"), index=True)
+    entry_id: Mapped[int | None] = mapped_column(ForeignKey("entries.id"), index=True)
+    change: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(16))  # restock | sale | count | remove
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MessageLog(Base):
